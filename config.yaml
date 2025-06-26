@@ -1,0 +1,74 @@
+# SDXL DoRA Training Configuration
+# This is a default configuration file for fine-tuning SDXL with DoRA
+
+# Model and Data Configuration
+model_name: "stabilityai/stable-diffusion-xl-base-1.0"
+dataset_path: ""  # REQUIRED: Path to your training images
+output_dir: "./output"
+cache_dir: "./cache"
+
+# DoRA Parameters
+rank: 64
+alpha: 32
+dropout: 0.1
+target_modules:
+  - "to_k"
+  - "to_q" 
+  - "to_v"
+  - "to_out.0"
+  - "proj_in"
+  - "proj_out"
+  - "ff.net.0.proj"
+  - "ff.net.2"
+
+# Training Parameters
+learning_rate: 0.0001
+batch_size: 1
+gradient_accumulation_steps: 4
+max_train_steps: 1000
+warmup_steps: 100
+save_every: 250
+eval_every: 100
+
+# Image Parameters
+resolution: 1024
+center_crop: true
+random_flip: true
+
+# Optimization
+optimizer: "adamw"
+weight_decay: 0.01
+beta1: 0.9
+beta2: 0.999
+epsilon: 1.0e-08
+max_grad_norm: 1.0
+
+# Learning Rate Scheduler
+lr_scheduler: "cosine"
+lr_warmup_steps: 100
+
+# Mixed Precision and Memory
+mixed_precision: "fp16"  # fp16, bf16, no
+gradient_checkpointing: true
+use_8bit_adam: true
+
+# Logging and Monitoring
+logging_dir: "./logs"
+log_level: "INFO"
+report_to: "tensorboard"  # tensorboard, wandb, none
+project_name: "sdxl-dora-training"
+run_name: null
+
+# Validation
+validation_prompts:
+  - "a beautiful landscape"
+  - "a cute cat"
+  - "abstract art"
+num_validation_images: 4
+validation_steps: 100
+
+# Safety and Debugging
+enable_safety_checker: true
+debug_mode: false
+resume_from_checkpoint: null
+seed: null
