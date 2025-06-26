@@ -668,10 +668,10 @@ class DoRATrainer:
             if torch.isnan(model_pred).any() or torch.isnan(noise).any():
                 self.logger.warning("NaN detected in model prediction or noise - skipping this batch")
                 return torch.tensor(0.0, device=model_pred.device, requires_grad=True)
-            
-            # Compute loss (ensure both tensors have the same dtype and are finite)
+              # Compute loss (ensure both tensors have the same dtype and are finite)
             loss = F.mse_loss(model_pred.float(), noise.float(), reduction="mean")
-              # Check if loss is finite
+            
+            # Check if loss is finite
             if not torch.isfinite(loss):
                 self.logger.warning(f"Non-finite loss detected: {loss}, replacing with zero")
                 loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
@@ -686,33 +686,83 @@ class DoRATrainer:
         """Run validation and generate sample images."""
         try:
             self.model.eval()
+              # For very early steps, test with base model first
+            if step < 100:
+                try:
+                    # Test with base model (no adaptations)
+                    base_pipeline = StableDiffusionXLPipeline.from_pretrained(
+                        self.config.model_name,
+                        torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
+                        safety_checker=None,
+                        requires_safety_checker=False
+                    )
+                    base_pipeline = base_pipeline.to(self.accelerator.device)
+                    
+                    test_image = base_pipeline(
+                        "a simple test image",
+                        num_inference_steps=10,
+                        guidance_scale=7.5,
+                        generator=torch.Generator(device=self.accelerator.device).manual_seed(42)
+                    ).images[0]
+                    
+                    # Save base model test
+                    validation_dir = Path(self.config.output_dir) / "samples" / f"step_{step}"
+                    validation_dir.mkdir(parents=True, exist_ok=True)
+                    test_image.save(validation_dir / "base_model_test.png")
+                    
+                    del base_pipeline  # Free memory
+                    torch.cuda.empty_cache()
+                    
+                except Exception as e:
+                    self.logger.warning(f"Base model test failed: {e}")
             
-            # Get the base UNet from the PEFT model
-            base_unet = self.accelerator.unwrap_model(self.model)
-            if hasattr(base_unet, 'get_base_model'):
-                base_unet = base_unet.get_base_model()
+            # For validation, we need to use the PEFT model directly
+            # Don't unwrap it as the adaptations are what we want to test
+            wrapped_model = self.accelerator.unwrap_model(self.model)
             
-            # Create validation pipeline
+            # Create validation pipeline with the trained model
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 self.config.model_name,
-                unet=base_unet,
+                unet=wrapped_model,
                 torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
                 safety_checker=None,
                 requires_safety_checker=False
             )
             pipeline = pipeline.to(self.accelerator.device)
-            
-            # Generate validation images
+              # Generate validation images
             validation_images = []
-            for prompt in self.config.validation_prompts:
-                with torch.autocast("cuda"):
-                    image = pipeline(
-                        prompt,
-                        num_inference_steps=20,
-                        guidance_scale=7.5,
-                        num_images_per_prompt=1
-                    ).images[0]
-                    validation_images.append((prompt, image))
+            for i, prompt in enumerate(self.config.validation_prompts):
+                try:
+                    with torch.autocast("cuda", enabled=(self.config.mixed_precision != "no")):
+                        # Try with different parameters to avoid black images
+                        image = pipeline(
+                            prompt,
+                            num_inference_steps=50,  # More steps for better quality
+                            guidance_scale=8.0,      # Slightly higher guidance
+                            num_images_per_prompt=1,
+                            generator=torch.Generator(device=self.accelerator.device).manual_seed(42 + i),
+                            negative_prompt="blurry, low quality, distorted",  # Add negative prompt
+                            height=1024,
+                            width=1024
+                        ).images[0]
+                        validation_images.append((prompt, image))
+                        
+                        # Debug: Check image values
+                        if self.config.debug:
+                            import numpy as np
+                            img_array = np.array(image)
+                            self.logger.debug(f"Generated image {i}: shape={img_array.shape}, range=[{img_array.min()}, {img_array.max()}]")
+                            
+                            # Check if image is mostly black
+                            if img_array.mean() < 10:  # Very dark image
+                                self.logger.warning(f"Image {i} appears to be mostly black (mean: {img_array.mean():.2f})")
+                        
+                except Exception as e:
+                    self.logger.warning(f"Failed to generate image for prompt '{prompt}': {e}")
+                    # Create a dummy image to avoid breaking the validation
+                    from PIL import Image
+                    dummy_image = Image.new('RGB', (1024, 1024), color='gray')
+                    validation_images.append((prompt, dummy_image))
             
             # Save validation images
             validation_dir = Path(self.config.output_dir) / "samples" / f"step_{step}"
