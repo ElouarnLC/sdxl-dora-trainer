@@ -59,10 +59,9 @@ class TrainingConfig:
     dataset_path: str = ""
     output_dir: str = "./output"
     cache_dir: str = "./cache"
-    
-    # DoRA specific parameters
-    rank: int = 64
-    alpha: int = 32
+      # DoRA specific parameters
+    rank: int = 32              # Reduced from 64 for better stability
+    alpha: int = 16             # Reduced from 32 for better stability 
     dropout: float = 0.1
     target_modules: List[str] = field(default_factory=lambda: [
         "to_k", "to_q", "to_v", "to_out.0",
@@ -338,8 +337,7 @@ class DoRATrainer:
                 if hasattr(self.text_encoder, "gradient_checkpointing_enable"):
                     self.text_encoder.gradient_checkpointing_enable()
                 if hasattr(self.text_encoder_2, "gradient_checkpointing_enable"):
-                    self.text_encoder_2.gradient_checkpointing_enable()
-            
+                    self.text_encoder_2.gradient_checkpointing_enable()            
             console.print("[green]✓[/green] Models loaded successfully")
             
         except Exception as e:
@@ -350,18 +348,29 @@ class DoRATrainer:
         """Setup DoRA (Weight-Decomposed Low-Rank Adaptation)."""
         console.print(Panel("[bold blue]Setting up DoRA[/bold blue]"))
         
-        try:            # DoRA configuration
+        try:
+            # DoRA configuration with more conservative settings
             dora_config = LoraConfig(
                 r=self.config.rank,
                 lora_alpha=self.config.alpha,
                 target_modules=self.config.target_modules,
                 lora_dropout=self.config.dropout,
                 bias="none",
-                use_dora=True  # This enables DoRA instead of LoRA
+                use_dora=True,  # This enables DoRA instead of LoRA
+                init_lora_weights="gaussian"  # Use gaussian initialization for stability
             )
             
             # Apply DoRA to the model
             self.model = get_peft_model(self.model, dora_config)
+            
+            # Initialize DoRA weights with smaller values for stability
+            for name, module in self.model.named_modules():
+                if hasattr(module, 'lora_A') and hasattr(module, 'lora_B'):
+                    # Initialize with smaller standard deviation for stability
+                    if hasattr(module.lora_A, 'default'):
+                        torch.nn.init.normal_(module.lora_A.default.weight, std=0.01)
+                    if hasattr(module.lora_B, 'default'):
+                        torch.nn.init.zeros_(module.lora_B.default.weight)
             
             # Print trainable parameters
             trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -371,6 +380,20 @@ class DoRATrainer:
             console.print(f"Trainable parameters: {trainable_params:,}")
             console.print(f"Total parameters: {total_params:,}")
             console.print(f"Trainable ratio: {100 * trainable_params / total_params:.2f}%")
+            
+            # Verify no NaN/inf values in parameters
+            nan_count = 0
+            inf_count = 0
+            for name, param in self.model.named_parameters():
+                if torch.isnan(param).any():
+                    nan_count += 1
+                    self.logger.warning(f"NaN detected in parameter: {name}")
+                if torch.isinf(param).any():
+                    inf_count += 1
+                    self.logger.warning(f"Inf detected in parameter: {name}")
+            
+            if nan_count > 0 or inf_count > 0:
+                raise RuntimeError(f"Invalid values in parameters: {nan_count} NaN, {inf_count} Inf")
             
         except Exception as e:
             self.logger.error(f"Failed to setup DoRA: {e}")
@@ -676,8 +699,7 @@ class DoRATrainer:
                 self.logger.warning(f"Non-finite loss detected: {loss}, replacing with zero")
                 loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
             
-            return loss
-            
+            return loss            
         except Exception as e:
             self.logger.error(f"Error computing loss: {e}")
             raise
@@ -686,78 +708,81 @@ class DoRATrainer:
         """Run validation and generate sample images."""
         try:
             self.model.eval()
-              # For very early steps, test with base model first
-            if step < 100:
-                try:
-                    # Test with base model (no adaptations)
-                    base_pipeline = StableDiffusionXLPipeline.from_pretrained(
-                        self.config.model_name,
-                        torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
-                        safety_checker=None,
-                        requires_safety_checker=False
-                    )
-                    base_pipeline = base_pipeline.to(self.accelerator.device)
-                    
-                    test_image = base_pipeline(
-                        "a simple test image",
-                        num_inference_steps=10,
-                        guidance_scale=7.5,
-                        generator=torch.Generator(device=self.accelerator.device).manual_seed(42)
-                    ).images[0]
-                    
-                    # Save base model test
-                    validation_dir = Path(self.config.output_dir) / "samples" / f"step_{step}"
-                    validation_dir.mkdir(parents=True, exist_ok=True)
-                    test_image.save(validation_dir / "base_model_test.png")
-                    
-                    del base_pipeline  # Free memory
-                    torch.cuda.empty_cache()
-                    
-                except Exception as e:
-                    self.logger.warning(f"Base model test failed: {e}")            # For validation, we'll use the base model first to ensure pipeline works
-            # Later we can add LoRA weight merging for proper evaluation
             
-            # Create a fresh pipeline from the base model
+            # For validation, we'll create a pipeline with the current DoRA weights
+            # First create the base pipeline
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 self.config.model_name,
                 torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
                 safety_checker=None,
                 requires_safety_checker=False
             )
+            
+            # Replace the UNet with our trained model
+            # First, we need to merge the DoRA weights into a temporary model
+            pipeline.unet = self.accelerator.unwrap_model(self.model)
             pipeline = pipeline.to(self.accelerator.device)
-              # Generate validation images
+            
+            # Force VAE to use float32 to prevent NaN issues
+            pipeline.vae = pipeline.vae.to(torch.float32)
+            
+            # Generate validation images
             validation_images = []
-            for i, prompt in enumerate(self.config.validation_prompts):
+            for i, prompt in enumerate(self.config.validation_prompts[:3]):  # Limit to 3 prompts for efficiency
                 try:
+                    # Use more conservative generation settings
                     with torch.autocast("cuda", enabled=(self.config.mixed_precision != "no")):
-                        # Try with different parameters to avoid black images
+                        # Check if model parameters contain NaN/inf before generation
+                        has_nan = False
+                        has_inf = False
+                        for name, param in pipeline.unet.named_parameters():
+                            if torch.isnan(param).any():
+                                self.logger.warning(f"NaN in parameter {name} before generation")
+                                has_nan = True
+                            if torch.isinf(param).any():
+                                self.logger.warning(f"Inf in parameter {name} before generation")
+                                has_inf = True
+                        
+                        if has_nan or has_inf:
+                            self.logger.error("Invalid values in model parameters, skipping validation")
+                            break
+                        
+                        # Generate with conservative settings
                         image = pipeline(
                             prompt,
-                            num_inference_steps=50,  # More steps for better quality
-                            guidance_scale=8.0,      # Slightly higher guidance
+                            num_inference_steps=25,    # Fewer steps for stability
+                            guidance_scale=7.5,        # Standard guidance
                             num_images_per_prompt=1,
                             generator=torch.Generator(device=self.accelerator.device).manual_seed(42 + i),
-                            negative_prompt="blurry, low quality, distorted",  # Add negative prompt
-                            height=1024,
-                            width=1024
+                            negative_prompt="blurry, low quality, distorted, deformed",
+                            height=512,  # Smaller resolution for validation
+                            width=512,
+                            output_type="pil"
                         ).images[0]
+                        
                         validation_images.append((prompt, image))
                         
-                        # Debug: Check image values
+                        # Check image quality
+                        import numpy as np
+                        img_array = np.array(image)
+                        img_mean = img_array.mean()
+                        img_std = img_array.std()
+                        
                         if self.config.debug:
-                            import numpy as np
-                            img_array = np.array(image)
-                            self.logger.debug(f"Generated image {i}: shape={img_array.shape}, range=[{img_array.min()}, {img_array.max()}]")
-                            
-                            # Check if image is mostly black
-                            if img_array.mean() < 10:  # Very dark image
-                                self.logger.warning(f"Image {i} appears to be mostly black (mean: {img_array.mean():.2f})")
+                            self.logger.debug(f"Generated image {i}: mean={img_mean:.2f}, std={img_std:.2f}")
+                        
+                        # Check if image is mostly black (indicates a problem)
+                        if img_mean < 10:
+                            self.logger.warning(f"Image {i} appears to be mostly black (mean: {img_mean:.2f})")
+                            self.logger.warning("This may indicate an issue with DoRA weight scaling")
                         
                 except Exception as e:
                     self.logger.warning(f"Failed to generate image for prompt '{prompt}': {e}")
-                    # Create a dummy image to avoid breaking the validation
-                    from PIL import Image
-                    dummy_image = Image.new('RGB', (1024, 1024), color='gray')
+                    # Create a warning image
+                    from PIL import Image, ImageDraw, ImageFont
+                    dummy_image = Image.new('RGB', (512, 512), color='red')
+                    draw = ImageDraw.Draw(dummy_image)
+                    draw.text((10, 10), f"Generation failed\nStep: {step}", fill='white')
                     validation_images.append((prompt, dummy_image))
             
             # Save validation images
@@ -765,7 +790,8 @@ class DoRATrainer:
             validation_dir.mkdir(parents=True, exist_ok=True)
             
             for i, (prompt, image) in enumerate(validation_images):
-                image.save(validation_dir / f"sample_{i}_{prompt[:50].replace(' ', '_')}.png")
+                safe_prompt = prompt[:50].replace(' ', '_').replace('/', '_')
+                image.save(validation_dir / f"sample_{i}_{safe_prompt}.png")
             
             # Log to tracking service
             if self.config.report_to != "none":
@@ -785,6 +811,8 @@ class DoRATrainer:
             
         except Exception as e:
             self.logger.error(f"Validation failed: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
         finally:
             self.model.train()
     

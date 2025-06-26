@@ -40,8 +40,7 @@ class SDXLDoRAInference:
                 return "cuda"
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 return "mps"
-            else:
-                return "cpu"
+            else:                return "cpu"
         return device
     
     def load_model(self):
@@ -57,11 +56,14 @@ class SDXLDoRAInference:
             # Load base pipeline
             task = progress.add_task("Loading base SDXL model...", total=None)
             
+            # Load with better error handling and precision settings
             self.pipeline = StableDiffusionXLPipeline.from_pretrained(
                 self.base_model_path,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 use_safetensors=True,
-                variant="fp16" if self.device == "cuda" else None
+                variant="fp16" if self.device == "cuda" else None,
+                safety_checker=None,
+                requires_safety_checker=False
             )
             
             progress.update(task, description="Base model loaded")
@@ -70,17 +72,60 @@ class SDXLDoRAInference:
             if self.dora_weights_path:
                 task = progress.add_task("Loading DoRA weights...", total=None)
                 
-                # Load DoRA weights
-                self.pipeline.unet = PeftModel.from_pretrained(
-                    self.pipeline.unet,
-                    self.dora_weights_path
-                )
-                
-                progress.update(task, description="DoRA weights loaded")
+                try:
+                    # Load DoRA weights with error checking
+                    console.print(f"[cyan]Loading DoRA weights from: {self.dora_weights_path}[/cyan]")
+                    
+                    # Check if the path exists and contains valid weights
+                    weights_path = Path(self.dora_weights_path)
+                    if not weights_path.exists():
+                        raise FileNotFoundError(f"DoRA weights path does not exist: {self.dora_weights_path}")
+                    
+                    # Load DoRA weights to UNet
+                    self.pipeline.unet = PeftModel.from_pretrained(
+                        self.pipeline.unet,
+                        self.dora_weights_path,
+                        torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+                    )
+                    
+                    # Verify weights don't contain NaN or inf values
+                    nan_count = 0
+                    inf_count = 0
+                    total_params = 0
+                    
+                    for name, param in self.pipeline.unet.named_parameters():
+                        total_params += param.numel()
+                        if torch.isnan(param).any():
+                            nan_count += torch.isnan(param).sum().item()
+                            console.print(f"[yellow]Warning: NaN values in parameter {name}[/yellow]")
+                        if torch.isinf(param).any():
+                            inf_count += torch.isinf(param).sum().item()
+                            console.print(f"[yellow]Warning: Inf values in parameter {name}[/yellow]")
+                    
+                    if nan_count > 0 or inf_count > 0:
+                        console.print(f"[red]Warning: DoRA weights contain {nan_count} NaN and {inf_count} Inf values out of {total_params} parameters[/red]")
+                        console.print("[red]This may cause black/corrupted image generation[/red]")
+                        
+                        # Option to continue with a warning
+                        response = input("Continue anyway? (y/N): ").strip().lower()
+                        if response != 'y':
+                            raise ValueError("DoRA weights contain invalid values")
+                    
+                    progress.update(task, description="DoRA weights loaded and validated")
+                    
+                except Exception as e:
+                    console.print(f"[red]Failed to load DoRA weights: {e}[/red]")
+                    console.print("[yellow]Continuing with base model only[/yellow]")
+                    
+            else:
+                console.print("[yellow]No DoRA weights specified, using base model only[/yellow]")
             
             # Move to device
             task = progress.add_task("Moving to device...", total=None)
             self.pipeline = self.pipeline.to(self.device)
+            
+            # Force VAE to use float32 to prevent NaN issues
+            self.pipeline.vae = self.pipeline.vae.to(torch.float32)
             
             # Enable memory efficient attention if available
             if hasattr(self.pipeline.unet, "enable_xformers_memory_efficient_attention"):
@@ -112,8 +157,7 @@ class SDXLDoRAInference:
         # Setup output directory
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-        
-        # Set seed for reproducibility
+          # Set seed for reproducibility
         if seed is not None:
             torch.manual_seed(seed)
         
@@ -128,8 +172,18 @@ class SDXLDoRAInference:
                 console.print(f"\n[cyan]Prompt {i+1}:[/cyan] {prompt}")
                 
                 try:
-                    # Generate images
+                    # Generate images with better error handling
                     with torch.autocast(self.device):
+                        # Check model parameters before generation
+                        has_invalid = False
+                        for name, param in self.pipeline.unet.named_parameters():
+                            if torch.isnan(param).any() or torch.isinf(param).any():
+                                console.print(f"[red]Warning: Invalid values in {name}[/red]")
+                                has_invalid = True
+                        
+                        if has_invalid:
+                            console.print("[yellow]Proceeding with generation despite invalid parameters[/yellow]")
+                        
                         result = self.pipeline(
                             prompt=prompt,
                             negative_prompt=negative_prompt,
@@ -137,10 +191,23 @@ class SDXLDoRAInference:
                             num_inference_steps=num_inference_steps,
                             guidance_scale=guidance_scale,
                             width=width,
-                            height=height
+                            height=height,
+                            generator=torch.Generator(device=self.device).manual_seed(seed) if seed is not None else None
                         )
                     
                     images = result.images
+                    
+                    # Check if images are valid (not all black)
+                    for j, image in enumerate(images):
+                        import numpy as np
+                        img_array = np.array(image)
+                        img_mean = img_array.mean()
+                        img_std = img_array.std()
+                        
+                        if img_mean < 10 and img_std < 5:
+                            console.print(f"[yellow]Warning: Image {j+1} appears to be mostly black (mean: {img_mean:.2f}, std: {img_std:.2f})[/yellow]")
+                            console.print("[yellow]This may indicate an issue with the DoRA weights[/yellow]")
+                    
                     all_images.extend(images)
                     
                     # Save images

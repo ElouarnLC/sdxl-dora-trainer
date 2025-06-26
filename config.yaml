@@ -8,8 +8,8 @@ output_dir: "./output"
 cache_dir: "./cache"
 
 # DoRA Parameters
-rank: 64
-alpha: 32
+rank: 32
+alpha: 16
 dropout: 0.1
 target_modules:
   - "to_k"
