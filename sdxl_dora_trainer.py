@@ -116,10 +116,9 @@ class TrainingConfig:
     ])
     num_validation_images: int = 4
     validation_steps: int = 100
-    
-    # Safety and debugging
+      # Safety and debugging
     enable_safety_checker: bool = True
-    debug_mode: bool = False
+    debug: bool = False
     resume_from_checkpoint: Optional[str] = None
     seed: Optional[int] = None
 
@@ -266,16 +265,29 @@ class DoRATrainer:
         console.print(Panel("[bold blue]Loading SDXL Models[/bold blue]"))
         
         try:
-            # Load tokenizer and text encoder
+            # Load tokenizer and text encoders (SDXL has two)
             self.tokenizer = CLIPTokenizer.from_pretrained(
                 self.config.model_name,
                 subfolder="tokenizer",
                 cache_dir=self.config.cache_dir
             )
             
+            self.tokenizer_2 = CLIPTokenizer.from_pretrained(
+                self.config.model_name,
+                subfolder="tokenizer_2",
+                cache_dir=self.config.cache_dir
+            )
+            
             self.text_encoder = CLIPTextModel.from_pretrained(
                 self.config.model_name,
                 subfolder="text_encoder",
+                cache_dir=self.config.cache_dir,
+                torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32
+            )
+            
+            self.text_encoder_2 = CLIPTextModel.from_pretrained(
+                self.config.model_name,
+                subfolder="text_encoder_2",
                 cache_dir=self.config.cache_dir,
                 torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32
             )
@@ -301,10 +313,10 @@ class DoRATrainer:
                 self.config.model_name,
                 subfolder="scheduler"
             )
-            
-            # Freeze models except UNet
+              # Freeze models except UNet
             self.vae.requires_grad_(False)
             self.text_encoder.requires_grad_(False)
+            self.text_encoder_2.requires_grad_(False)
             
             # Enable gradient checkpointing
             if self.config.gradient_checkpointing:
@@ -523,21 +535,38 @@ class DoRATrainer:
                 (latents.shape[0],), device=latents.device
             ).long()
             
-            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)
-            
-            # Encode text
+            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)            # Encode text with both encoders
             with torch.no_grad():
                 input_ids = batch["input_ids"].to(self.accelerator.device)
-                encoder_hidden_states = self.text_encoder(input_ids)[0]
-            
-            # For SDXL, we need to provide additional conditioning
-            # Create dummy pooled text embeddings (normally from text_encoder_2)
+                
+                # For SDXL, we use a different approach
+                # We need to encode text properly for SDXL
+                
+                # First text encoder (CLIP ViT-L/14)
+                encoder_output_1 = self.text_encoder(input_ids)
+                prompt_embeds_1 = encoder_output_1.last_hidden_state
+                
+                # Second text encoder (OpenCLIP ViT-bigG/14)
+                encoder_output_2 = self.text_encoder_2(input_ids)
+                prompt_embeds_2 = encoder_output_2.last_hidden_state
+                pooled_prompt_embeds = encoder_output_2.pooler_output
+                
+                # For SDXL, we concatenate the text embeddings along the feature dimension
+                # Make sure both have the same sequence length
+                seq_len = min(prompt_embeds_1.shape[1], prompt_embeds_2.shape[1])
+                prompt_embeds_1 = prompt_embeds_1[:, :seq_len, :]
+                prompt_embeds_2 = prompt_embeds_2[:, :seq_len, :]
+                
+                # Concatenate along the feature dimension (768 + 1280 = 2048)
+                encoder_hidden_states = torch.cat([prompt_embeds_1, prompt_embeds_2], dim=-1)
+              # For SDXL, we need to provide additional conditioning
             batch_size = encoder_hidden_states.shape[0]
-            pooled_prompt_embeds = torch.zeros(
-                (batch_size, 1280), 
-                device=self.accelerator.device, 
-                dtype=target_dtype
-            )
+            
+            # Debug: Print tensor shapes
+            if self.config.debug:
+                self.logger.debug(f"encoder_hidden_states shape: {encoder_hidden_states.shape}")
+                self.logger.debug(f"noisy_latents shape: {noisy_latents.shape}")
+                self.logger.debug(f"timesteps shape: {timesteps.shape}")
             
             # Create time embeddings for SDXL
             # SDXL expects original size, crop coordinates, and target size
@@ -547,7 +576,7 @@ class DoRATrainer:
             
             # Create added conditioning kwargs for SDXL
             added_cond_kwargs = {
-                "text_embeds": pooled_prompt_embeds,
+                "text_embeds": pooled_prompt_embeds.to(target_dtype),
                 "time_ids": torch.cat([original_size, crops_coords_top_left, target_size], dim=1).to(target_dtype)
             }
             
