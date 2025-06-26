@@ -26,7 +26,7 @@ A production-ready tool for fine-tuning Stable Diffusion XL models using **DoRA 
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/sdxl-dora-trainer.git
+git clone https://github.com/ElouarnLC/sdxl-dora-trainer.git
 cd sdxl-dora-trainer
 
 # Run the automated setup
