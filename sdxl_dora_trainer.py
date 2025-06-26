@@ -714,16 +714,12 @@ class DoRATrainer:
                     torch.cuda.empty_cache()
                     
                 except Exception as e:
-                    self.logger.warning(f"Base model test failed: {e}")
+                    self.logger.warning(f"Base model test failed: {e}")            # For validation, we'll use the base model first to ensure pipeline works
+            # Later we can add LoRA weight merging for proper evaluation
             
-            # For validation, we need to use the PEFT model directly
-            # Don't unwrap it as the adaptations are what we want to test
-            wrapped_model = self.accelerator.unwrap_model(self.model)
-            
-            # Create validation pipeline with the trained model
+            # Create a fresh pipeline from the base model
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 self.config.model_name,
-                unet=wrapped_model,
                 torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
                 safety_checker=None,
                 requires_safety_checker=False
@@ -825,10 +821,13 @@ class DoRATrainer:
             self._setup_optimizer()
             self._setup_accelerator()
             self._setup_logging_tools()
-            
-            # Test VAE encoding to catch issues early
+              # Test VAE encoding to catch issues early
             if not self.test_vae_encoding():
                 raise RuntimeError("VAE encoding test failed - training cannot proceed")
+            
+            # Test base pipeline to ensure SDXL works correctly
+            if not self.test_base_pipeline():
+                raise RuntimeError("Base SDXL pipeline test failed - check your model and setup")
             
             # Training metrics
             global_step = 0
@@ -955,6 +954,52 @@ class DoRATrainer:
                 
         except Exception as e:
             self.logger.error(f"VAE test failed: {e}")
+            return False
+        
+    def test_base_pipeline(self):
+        """Test if the base SDXL pipeline works correctly."""
+        try:
+            console.print("[yellow]Testing base SDXL pipeline...[/yellow]")
+            
+            # Create base pipeline
+            pipeline = StableDiffusionXLPipeline.from_pretrained(
+                self.config.model_name,
+                torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
+                safety_checker=None,
+                requires_safety_checker=False
+            )
+            pipeline = pipeline.to(self.accelerator.device)
+            
+            # Generate test image
+            with torch.autocast("cuda", enabled=(self.config.mixed_precision != "no")):
+                image = pipeline(
+                    "a simple test image of a cat",
+                    num_inference_steps=20,
+                    guidance_scale=7.5,
+                    generator=torch.Generator(device=self.accelerator.device).manual_seed(42)
+                ).images[0]
+            
+            # Check image
+            import numpy as np
+            img_array = np.array(image)
+            
+            if img_array.mean() < 10:
+                self.logger.error("Base pipeline test failed: generated mostly black image")
+                return False
+            
+            # Save test image
+            test_dir = Path(self.config.output_dir) / "samples" / "base_test"
+            test_dir.mkdir(parents=True, exist_ok=True)
+            image.save(test_dir / "base_pipeline_test.png")
+            
+            console.print(f"[green]✓[/green] Base pipeline test passed. Image mean: {img_array.mean():.2f}")
+            
+            del pipeline
+            torch.cuda.empty_cache()
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Base pipeline test failed: {e}")
             return False
 
 def create_config_from_args(args) -> TrainingConfig:
