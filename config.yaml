@@ -48,7 +48,7 @@ lr_scheduler: "cosine"
 lr_warmup_steps: 100
 
 # Mixed Precision and Memory
-mixed_precision: "fp16"  # fp16, bf16, no
+mixed_precision: "no"  # fp16, bf16, no
 gradient_checkpointing: true
 use_8bit_adam: true
 

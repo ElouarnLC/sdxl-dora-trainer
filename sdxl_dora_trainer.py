@@ -95,7 +95,7 @@ class TrainingConfig:
     lr_warmup_steps: int = 100
     
     # Mixed precision and memory
-    mixed_precision: str = "fp16"  # fp16, bf16, no
+    mixed_precision: str = "no"  # fp16, bf16, no
     gradient_checkpointing: bool = True
     use_8bit_adam: bool = True
     
