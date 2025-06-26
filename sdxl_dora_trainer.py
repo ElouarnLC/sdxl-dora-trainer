@@ -925,8 +925,7 @@ class DoRATrainer:
             self.logger.error(f"Training failed: {e}")
             traceback.print_exc()
             raise
-        finally:
-            # Cleanup
+        finally:            # Cleanup
             if self.accelerator:
                 self.accelerator.end_training()
 
@@ -955,51 +954,136 @@ class DoRATrainer:
         except Exception as e:
             self.logger.error(f"VAE test failed: {e}")
             return False
-        
+    
     def test_base_pipeline(self):
         """Test if the base SDXL pipeline works correctly."""
         try:
             console.print("[yellow]Testing base SDXL pipeline...[/yellow]")
             
-            # Create base pipeline
-            pipeline = StableDiffusionXLPipeline.from_pretrained(
-                self.config.model_name,
-                torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
-                safety_checker=None,
-                requires_safety_checker=False
-            )
-            pipeline = pipeline.to(self.accelerator.device)
+            # Test different dtypes and configurations
+            test_configs = [
+                {"dtype": torch.float32, "variant": None, "desc": "float32"},
+                {"dtype": torch.float16, "variant": "fp16", "desc": "fp16"},
+            ]
             
-            # Generate test image
-            with torch.autocast("cuda", enabled=(self.config.mixed_precision != "no")):
-                image = pipeline(
-                    "a simple test image of a cat",
-                    num_inference_steps=20,
-                    guidance_scale=7.5,
-                    generator=torch.Generator(device=self.accelerator.device).manual_seed(42)
-                ).images[0]
+            for config_test in test_configs:
+                try:
+                    console.print(f"[yellow]Testing with {config_test['desc']}...[/yellow]")
+                    
+                    # Create base pipeline
+                    pipeline_args = {
+                        "torch_dtype": config_test["dtype"],
+                        "safety_checker": None,
+                        "requires_safety_checker": False,
+                        "use_safetensors": True,
+                    }
+                    
+                    if config_test["variant"]:
+                        pipeline_args["variant"] = config_test["variant"]
+                    
+                    pipeline = StableDiffusionXLPipeline.from_pretrained(
+                        self.config.model_name,
+                        **pipeline_args
+                    )
+                    pipeline = pipeline.to(self.accelerator.device)
+                    
+                    # Enable memory efficient attention if available
+                    try:
+                        pipeline.enable_memory_efficient_attention()
+                    except Exception:
+                        pass
+                    
+                    # Try to enable xformers if available
+                    try:
+                        pipeline.enable_xformers_memory_efficient_attention()
+                    except Exception:
+                        pass
+                    
+                    # Generate test image with very simple settings
+                    prompt = "a red apple on a white background"
+                    
+                    self.logger.debug(f"Generating test image with prompt: '{prompt}'")
+                    self.logger.debug(f"Pipeline device: {pipeline.unet.device}")
+                    self.logger.debug(f"Pipeline dtype: {pipeline.unet.dtype}")
+                    self.logger.debug(f"VAE device: {pipeline.vae.device}")
+                    self.logger.debug(f"VAE dtype: {pipeline.vae.dtype}")
+                    
+                    # Test with different guidance scales
+                    for guidance_scale in [7.5, 5.0, 1.0]:
+                        with torch.no_grad():
+                            # Generate image
+                            result = pipeline(
+                                prompt,
+                                num_inference_steps=20,
+                                guidance_scale=guidance_scale,
+                                generator=torch.Generator(device=self.accelerator.device).manual_seed(42),
+                                height=512,  # Use smaller resolution for testing
+                                width=512,
+                                output_type="pil"
+                            )
+                            
+                            image = result.images[0]
+                            
+                            # Check image in detail
+                            import numpy as np
+                            img_array = np.array(image)
+                            
+                            self.logger.debug(f"Generated image stats (guidance={guidance_scale}):")
+                            self.logger.debug(f"  Shape: {img_array.shape}")
+                            self.logger.debug(f"  Dtype: {img_array.dtype}")
+                            self.logger.debug(f"  Min: {img_array.min()}")
+                            self.logger.debug(f"  Max: {img_array.max()}")
+                            self.logger.debug(f"  Mean: {img_array.mean():.2f}")
+                            self.logger.debug(f"  Std: {img_array.std():.2f}")
+                            self.logger.debug(f"  Has NaN: {np.isnan(img_array).any()}")
+                            self.logger.debug(f"  Has Inf: {np.isinf(img_array).any()}")
+                            
+                            # Save test image for inspection
+                            test_dir = Path(self.config.output_dir) / "samples" / "base_test"
+                            test_dir.mkdir(parents=True, exist_ok=True)
+                            filename = f"base_test_{config_test['desc']}_guidance{guidance_scale}.png"
+                            image.save(test_dir / filename)
+                            
+                            # Check if image is valid (not mostly black)
+                            if img_array.mean() > 10 and img_array.std() > 5:
+                                console.print(f"[green]✓[/green] Base pipeline test passed with {config_test['desc']}, guidance={guidance_scale}")
+                                console.print(f"  Image mean: {img_array.mean():.2f}, std: {img_array.std():.2f}")
+                                
+                                del pipeline
+                                torch.cuda.empty_cache()
+                                return True
+                            else:
+                                self.logger.warning(f"Poor image quality with {config_test['desc']}, guidance={guidance_scale}: mean={img_array.mean():.2f}, std={img_array.std():.2f}")
+                    
+                    del pipeline
+                    torch.cuda.empty_cache()
+                    
+                except Exception as e:
+                    self.logger.warning(f"Pipeline test failed with {config_test['desc']}: {e}")
+                    continue
             
-            # Check image
-            import numpy as np
-            img_array = np.array(image)
+            # If we get here, all configurations failed
+            self.logger.error("Base pipeline test failed with all configurations")
+            self.logger.error("This indicates a fundamental problem with your SDXL setup")
+            self.logger.error("Possible issues:")
+            self.logger.error("1. Corrupted or incompatible SDXL model")
+            self.logger.error("2. Insufficient GPU memory")
+            self.logger.error("3. Driver or CUDA compatibility issues")
+            self.logger.error("4. Outdated diffusers library")
+            self.logger.error("5. Model not properly downloaded")
+            self.logger.error("")
+            self.logger.error("Suggestions:")
+            self.logger.error("1. Try: pip install --upgrade diffusers transformers accelerate")
+            self.logger.error("2. Try a different model like 'stabilityai/stable-diffusion-xl-base-1.0'")
+            self.logger.error("3. Check GPU memory: nvidia-smi")
+            self.logger.error("4. Try running with CPU: --mixed_precision no")
             
-            if img_array.mean() < 10:
-                self.logger.error("Base pipeline test failed: generated mostly black image")
-                return False
-            
-            # Save test image
-            test_dir = Path(self.config.output_dir) / "samples" / "base_test"
-            test_dir.mkdir(parents=True, exist_ok=True)
-            image.save(test_dir / "base_pipeline_test.png")
-            
-            console.print(f"[green]✓[/green] Base pipeline test passed. Image mean: {img_array.mean():.2f}")
-            
-            del pipeline
-            torch.cuda.empty_cache()
-            return True
+            return False
             
         except Exception as e:
-            self.logger.error(f"Base pipeline test failed: {e}")
+            self.logger.error(f"Base pipeline test failed with exception: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
             return False
 
 def create_config_from_args(args) -> TrainingConfig:
@@ -1227,20 +1311,21 @@ Examples:
         ("Max Steps", config.max_train_steps),
         ("Resolution", config.resolution),
         ("Mixed Precision", config.mixed_precision),
-        ("Report To", config.report_to)
-    ]
+        ("Report To", config.report_to)    ]
     
     for param, value in key_params:
         table.add_row(param, str(value))
     
     console.print(table)
-      # Confirm training start
+    
+    # Confirm training start
     if not config.debug:
         response = input("\nStart training? [y/N]: ")
         if response.lower() not in ['y', 'yes']:
             console.print("Training cancelled.")
             sys.exit(0)
-      # Create and run trainer
+    
+    # Create and run trainer
     try:
         trainer = DoRATrainer(config)
         trainer.train()
