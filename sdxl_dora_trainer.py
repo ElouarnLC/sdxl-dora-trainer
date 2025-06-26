@@ -484,9 +484,19 @@ class DoRATrainer:
         
         elif self.config.report_to == "tensorboard":
             try:
+                # Filter config to only include serializable values for tensorboard
+                config_dict = {}
+                for key, value in self.config.__dict__.items():
+                    if isinstance(value, (int, float, str, bool)) or value is None:
+                        config_dict[key] = value
+                    elif isinstance(value, list) and all(isinstance(x, (int, float, str, bool)) for x in value):
+                        config_dict[key] = value
+                    else:
+                        config_dict[key] = str(value)
+                
                 self.accelerator.init_trackers(
                     project_name=self.config.project_name,
-                    config=self.config.__dict__
+                    config=config_dict
                 )
                 console.print("[green]✓[/green] TensorBoard logging enabled")
             except Exception as e:
@@ -495,13 +505,19 @@ class DoRATrainer:
     def compute_loss(self, batch):
         """Compute the diffusion loss."""
         try:
+            # Get the target dtype for consistency
+            target_dtype = torch.float16 if self.config.mixed_precision == "fp16" else torch.float32
+            
+            # Ensure input images are in the correct dtype and device
+            pixel_values = batch["pixel_values"].to(self.accelerator.device, dtype=target_dtype)
+            
             # Encode images to latent space
             with torch.no_grad():
-                latents = self.vae.encode(batch["pixel_values"]).latent_dist.sample()
+                latents = self.vae.encode(pixel_values).latent_dist.sample()
                 latents = latents * self.vae.config.scaling_factor
             
             # Add noise to latents
-            noise = torch.randn_like(latents)
+            noise = torch.randn_like(latents, dtype=target_dtype, device=latents.device)
             timesteps = torch.randint(
                 0, self.noise_scheduler.config.num_train_timesteps,
                 (latents.shape[0],), device=latents.device
@@ -511,7 +527,8 @@ class DoRATrainer:
             
             # Encode text
             with torch.no_grad():
-                encoder_hidden_states = self.text_encoder(batch["input_ids"])[0]
+                input_ids = batch["input_ids"].to(self.accelerator.device)
+                encoder_hidden_states = self.text_encoder(input_ids)[0]
             
             # Predict noise
             model_pred = self.model(
@@ -520,7 +537,7 @@ class DoRATrainer:
                 encoder_hidden_states
             ).sample
             
-            # Compute loss
+            # Compute loss (ensure both tensors have the same dtype)
             loss = F.mse_loss(model_pred.float(), noise.float(), reduction="mean")
             
             return loss
