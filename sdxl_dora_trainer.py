@@ -116,7 +116,7 @@ class TrainingConfig:
     num_validation_images: int = 4
     validation_steps: int = 100    # Safety and debugging
     enable_safety_checker: bool = True
-    debug: bool = True  # Enable debug mode to help diagnose NaN issues
+    debug: bool = False  # Disable debug mode by default
     resume_from_checkpoint: Optional[str] = None
     seed: Optional[int] = None
 
@@ -166,8 +166,7 @@ class CustomImageDataset(Dataset):
             transforms.CenterCrop(size) if center_crop else transforms.Lambda(lambda x: x),
             transforms.RandomHorizontalFlip() if random_flip else transforms.Lambda(lambda x: x),
             transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5])
-        ])
+            transforms.Normalize([0.5], [0.5])        ])
         
         console.print(f"[green]✓[/green] Loaded {len(self.image_paths)} images from {data_path}")
     
@@ -179,7 +178,16 @@ class CustomImageDataset(Dataset):
             # Load and process image
             image_path = self.image_paths[idx]
             image = Image.open(image_path).convert('RGB')
+            
+            # Validate image
+            if image.size[0] == 0 or image.size[1] == 0:
+                raise ValueError(f"Invalid image size: {image.size}")
+            
             image = self.transforms(image)
+            
+            # Validate transformed image tensor
+            if torch.isnan(image).any() or torch.isinf(image).any():
+                raise ValueError(f"Invalid values in transformed image from {image_path}")
             
             # Tokenize caption
             caption = self.captions[idx]
@@ -524,19 +532,30 @@ class DoRATrainer:
             target_dtype = torch.float16 if self.config.mixed_precision == "fp16" else torch.float32
             
             # Ensure input images are in the correct dtype and device
-            pixel_values = batch["pixel_values"].to(self.accelerator.device, dtype=target_dtype)
-              # Encode images to latent space
+            pixel_values = batch["pixel_values"].to(self.accelerator.device, dtype=target_dtype)            # Encode images to latent space
             with torch.no_grad():
-                # Clamp pixel values to valid range
+                # Ensure pixel values are in valid range for VAE
                 pixel_values = torch.clamp(pixel_values, -1.0, 1.0)
+                
+                # Debug: Check input pixel values
+                if self.config.debug:
+                    self.logger.debug(f"pixel_values stats: min={pixel_values.min():.3f}, max={pixel_values.max():.3f}, shape={pixel_values.shape}")
                 
                 latents = self.vae.encode(pixel_values).latent_dist.sample()
                 latents = latents * self.vae.config.scaling_factor
                 
-                # Check for NaN in latents
+                # Check for NaN in latents - if found, try to recover
                 if torch.isnan(latents).any():
-                    self.logger.warning("NaN detected in VAE latents - skipping batch")
-                    return torch.tensor(0.0, device=pixel_values.device, requires_grad=True)
+                    self.logger.warning("NaN detected in VAE latents - attempting recovery")
+                    # Replace NaN with zeros
+                    latents = torch.where(torch.isnan(latents), torch.zeros_like(latents), latents)
+                    if torch.isnan(latents).any():  # If still NaN, skip
+                        self.logger.error("Unable to recover from NaN latents - data issue detected")
+                        return None  # Signal to skip this batch
+                
+                # Debug: Check latent values
+                if self.config.debug:
+                    self.logger.debug(f"latents stats: min={latents.min():.3f}, max={latents.max():.3f}, shape={latents.shape}")
             
             # Add noise to latents
             noise = torch.randn_like(latents, dtype=target_dtype, device=latents.device)
@@ -748,13 +767,17 @@ class DoRATrainer:
             
             with progress:
                 task = progress.add_task("Training...", total=self.config.max_train_steps)
-                
-                # Training loop
+                  # Training loop
                 for epoch in range(1000):  # Large number, will break when max_steps reached
                     for batch in self.train_dataloader:
                         with self.accelerator.accumulate(self.model):
                             # Compute loss
                             loss = self.compute_loss(batch)
+                            
+                            # Skip batch if loss computation failed
+                            if loss is None:
+                                self.logger.warning("Skipping batch due to data issues")
+                                continue
                             
                             # Backward pass
                             self.accelerator.backward(loss)
@@ -770,8 +793,9 @@ class DoRATrainer:
                             self.optimizer.step()
                             self.lr_scheduler.step()
                             self.optimizer.zero_grad()
-                          # Update metrics
-                        if torch.isfinite(loss):
+                        
+                        # Update metrics only if we have a valid loss
+                        if loss is not None and torch.isfinite(loss):
                             total_loss += loss.detach().item()
                         global_step += 1
                         
@@ -995,11 +1019,10 @@ Examples:
                        help="Steps between validations (default: 100)")
     parser.add_argument("--save_every", type=int, default=250,
                        help="Steps between checkpoints (default: 250)")
-    
-    # Safety and debugging
+      # Safety and debugging
     parser.add_argument("--enable_safety_checker", action="store_true", default=True,
                        help="Enable safety checker")
-    parser.add_argument("--debug_mode", action="store_true",
+    parser.add_argument("--debug", action="store_true",
                        help="Enable debug mode")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None,
                        help="Resume from checkpoint path")
