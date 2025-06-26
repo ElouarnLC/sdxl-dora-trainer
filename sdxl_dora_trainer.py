@@ -312,17 +312,22 @@ class DoRATrainer:
             self.noise_scheduler = DDPMScheduler.from_pretrained(
                 self.config.model_name,
                 subfolder="scheduler"
-            )
-              # Freeze models except UNet
+            )            # Freeze models except UNet
             self.vae.requires_grad_(False)
             self.text_encoder.requires_grad_(False)
             self.text_encoder_2.requires_grad_(False)
             
-            # Enable gradient checkpointing
+            # Set models to eval mode (except UNet which will be trained)
+            self.vae.eval()
+            self.text_encoder.eval()
+            self.text_encoder_2.eval()
+              # Enable gradient checkpointing
             if self.config.gradient_checkpointing:
                 self.model.enable_gradient_checkpointing()
                 if hasattr(self.text_encoder, "gradient_checkpointing_enable"):
                     self.text_encoder.gradient_checkpointing_enable()
+                if hasattr(self.text_encoder_2, "gradient_checkpointing_enable"):
+                    self.text_encoder_2.gradient_checkpointing_enable()
             
             console.print("[green]✓[/green] Models loaded successfully")
             
@@ -470,10 +475,10 @@ class DoRATrainer:
                 self.train_dataloader,
                 self.lr_scheduler
             )
-            
-            # Move other models to device
+              # Move other models to device
             self.vae = self.vae.to(self.accelerator.device)
             self.text_encoder = self.text_encoder.to(self.accelerator.device)
+            self.text_encoder_2 = self.text_encoder_2.to(self.accelerator.device)
             
             console.print(f"[green]✓[/green] Accelerator setup complete (Device: {self.accelerator.device})")
             
@@ -538,16 +543,25 @@ class DoRATrainer:
             noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)            # Encode text with both encoders
             with torch.no_grad():
                 input_ids = batch["input_ids"].to(self.accelerator.device)
+                attention_mask = batch.get("attention_mask", None)
+                if attention_mask is not None:
+                    attention_mask = attention_mask.to(self.accelerator.device)
                 
                 # For SDXL, we use a different approach
                 # We need to encode text properly for SDXL
                 
                 # First text encoder (CLIP ViT-L/14)
-                encoder_output_1 = self.text_encoder(input_ids)
+                encoder_output_1 = self.text_encoder(
+                    input_ids, 
+                    attention_mask=attention_mask
+                )
                 prompt_embeds_1 = encoder_output_1.last_hidden_state
                 
                 # Second text encoder (OpenCLIP ViT-bigG/14)
-                encoder_output_2 = self.text_encoder_2(input_ids)
+                encoder_output_2 = self.text_encoder_2(
+                    input_ids,
+                    attention_mask=attention_mask
+                )
                 prompt_embeds_2 = encoder_output_2.last_hidden_state
                 pooled_prompt_embeds = encoder_output_2.pooler_output
                 
