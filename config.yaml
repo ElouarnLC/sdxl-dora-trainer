@@ -69,6 +69,6 @@ validation_steps: 100
 
 # Safety and Debugging
 enable_safety_checker: true
-debug_mode: false
+debug: false
 resume_from_checkpoint: null
 seed: null

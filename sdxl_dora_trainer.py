@@ -1084,15 +1084,13 @@ Examples:
         table.add_row(param, str(value))
     
     console.print(table)
-    
-    # Confirm training start
-    if not config.debug_mode:
+      # Confirm training start
+    if not config.debug:
         response = input("\nStart training? [y/N]: ")
         if response.lower() not in ['y', 'yes']:
             console.print("Training cancelled.")
             sys.exit(0)
-    
-    # Create and run trainer
+      # Create and run trainer
     try:
         trainer = DoRATrainer(config)
         trainer.train()
@@ -1100,7 +1098,7 @@ Examples:
         console.print("\n[yellow]Training interrupted by user[/yellow]")
     except Exception as e:
         console.print(f"[red]Training failed: {e}[/red]")
-        if config.debug_mode:
+        if config.debug:
             traceback.print_exc()
         sys.exit(1)
 
