@@ -530,11 +530,33 @@ class DoRATrainer:
                 input_ids = batch["input_ids"].to(self.accelerator.device)
                 encoder_hidden_states = self.text_encoder(input_ids)[0]
             
+            # For SDXL, we need to provide additional conditioning
+            # Create dummy pooled text embeddings (normally from text_encoder_2)
+            batch_size = encoder_hidden_states.shape[0]
+            pooled_prompt_embeds = torch.zeros(
+                (batch_size, 1280), 
+                device=self.accelerator.device, 
+                dtype=target_dtype
+            )
+            
+            # Create time embeddings for SDXL
+            # SDXL expects original size, crop coordinates, and target size
+            original_size = torch.tensor([[self.config.resolution, self.config.resolution]] * batch_size).to(self.accelerator.device)
+            crops_coords_top_left = torch.tensor([[0, 0]] * batch_size).to(self.accelerator.device)
+            target_size = torch.tensor([[self.config.resolution, self.config.resolution]] * batch_size).to(self.accelerator.device)
+            
+            # Create added conditioning kwargs for SDXL
+            added_cond_kwargs = {
+                "text_embeds": pooled_prompt_embeds,
+                "time_ids": torch.cat([original_size, crops_coords_top_left, target_size], dim=1).to(target_dtype)
+            }
+            
             # Predict noise
             model_pred = self.model(
                 noisy_latents,
                 timesteps,
-                encoder_hidden_states
+                encoder_hidden_states,
+                added_cond_kwargs=added_cond_kwargs
             ).sample
             
             # Compute loss (ensure both tensors have the same dtype)
