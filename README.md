@@ -401,7 +401,7 @@ If you use this tool in your research, please cite:
   title={SDXL DoRA Trainer: Production-Ready Fine-tuning Tool},
   author={ElouarnLC},
   year={2025},
-  url={https://github.com/yourusername/sdxl-dora-trainer},
+  url={https://github.com/ElouarnLC/sdxl-dora-trainer},
   license={MIT}
 }
 ```
