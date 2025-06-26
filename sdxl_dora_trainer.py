@@ -43,7 +43,7 @@ from diffusers import (
     AutoencoderKL
 )
 from transformers import CLIPTextModel, CLIPTokenizer
-from peft import LoraConfig, get_peft_model, TaskType
+from peft import LoraConfig, get_peft_model
 from accelerate import Accelerator
 from safetensors.torch import save_file, load_file
 
@@ -322,15 +322,13 @@ class DoRATrainer:
         """Setup DoRA (Weight-Decomposed Low-Rank Adaptation)."""
         console.print(Panel("[bold blue]Setting up DoRA[/bold blue]"))
         
-        try:
-            # DoRA configuration
+        try:            # DoRA configuration
             dora_config = LoraConfig(
                 r=self.config.rank,
                 lora_alpha=self.config.alpha,
                 target_modules=self.config.target_modules,
                 lora_dropout=self.config.dropout,
                 bias="none",
-                task_type=TaskType.DIFFUSION,
                 use_dora=True  # This enables DoRA instead of LoRA
             )
             
@@ -341,7 +339,7 @@ class DoRATrainer:
             trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
             total_params = sum(p.numel() for p in self.model.parameters())
             
-            console.print(f"[green]✓[/green] DoRA setup complete")
+            console.print("[green]✓[/green] DoRA setup complete")
             console.print(f"Trainable parameters: {trainable_params:,}")
             console.print(f"Total parameters: {total_params:,}")
             console.print(f"Trainable ratio: {100 * trainable_params / total_params:.2f}%")
@@ -771,11 +769,16 @@ def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
         description="SDXL DoRA Fine-tuning Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+        formatter_class=argparse.RawDescriptionHelpFormatter,        epilog="""
 Examples:
-  # Basic training
+  # Using configuration file
+  python sdxl_dora_trainer.py --config config.yaml
+  
+  # Basic training with command line arguments
   python sdxl_dora_trainer.py --dataset_path ./my_images --output_dir ./output
+  
+  # Override config file with command line arguments
+  python sdxl_dora_trainer.py --config config.yaml --learning_rate 5e-5 --batch_size 2
   
   # Advanced training with custom parameters
   python sdxl_dora_trainer.py \\
@@ -792,13 +795,18 @@ Examples:
     --project_name my-sdxl-project
         """
     )
-    
-    # Required arguments
+      # Required arguments
     parser.add_argument(
         "--dataset_path",
         type=str,
-        required=True,
         help="Path to the training dataset directory"
+    )
+    
+    # Configuration file
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to configuration file (YAML or JSON)"
     )
     
     # Model and output
@@ -883,12 +891,31 @@ Examples:
                        help="Resume from checkpoint path")
     parser.add_argument("--seed", type=int, default=None,
                        help="Random seed for reproducibility")
-    
-    # Parse arguments
+      # Parse arguments
     args = parser.parse_args()
     
-    # Create and validate configuration
-    config = create_config_from_args(args)
+    # Load configuration
+    if args.config:
+        # Load from config file
+        try:
+            # Import here to avoid circular imports
+            from config_manager import ConfigManager
+            config = ConfigManager.load_config(args.config)
+            
+            # Override with command line arguments
+            for key, value in vars(args).items():
+                if key != 'config' and value is not None:
+                    setattr(config, key, value)
+        except Exception as e:
+            console.print(f"[red]Failed to load config file: {e}[/red]")
+            sys.exit(1)
+    else:
+        # Create config from command line arguments
+        if not args.dataset_path:
+            console.print("[red]Error: --dataset_path or --config is required[/red]")
+            parser.print_help()
+            sys.exit(1)
+        config = create_config_from_args(args)    # Validate configuration
     errors = validate_config(config)
     
     if errors:
