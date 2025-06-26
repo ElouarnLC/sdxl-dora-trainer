@@ -2,13 +2,13 @@
 
 A production-ready tool for fine-tuning Stable Diffusion XL models using **DoRA (Weight-Decomposed Low-Rank Adaptation)**, which is more efficient and effective than traditional LoRA.
 
-## � Important: Black Image Issue Fixed!
+## 🚨 Important: Black Image Issue Fixed!
 
 **If you're experiencing black/empty images during generation, see [docs/BLACK_IMAGE_FIX.md](docs/BLACK_IMAGE_FIX.md) for the solution!**
 
 **TL;DR:** Use `--mixed_precision no` instead of `fp16` to fix black image generation with DoRA.
 
-## �🚀 Features
+## 🚀 Features
 
 - **DoRA Integration**: Uses the latest DoRA technique for more efficient fine-tuning
 - **Production Ready**: Robust error handling, logging, and monitoring
@@ -375,7 +375,7 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 ### Development Setup
 ```bash
-git clone https://github.com/your-username/sdxl-dora-trainer.git
+git clone https://github.com/ElouarnLC/sdxl-dora-trainer.git
 cd sdxl-dora-trainer
 pip install -r requirements.txt
 pip install -e .
@@ -399,7 +399,7 @@ If you use this tool in your research, please cite:
 ```bibtex
 @software{sdxl_dora_trainer,
   title={SDXL DoRA Trainer: Production-Ready Fine-tuning Tool},
-  author={Your Name and Contributors},
+  author={ElouarnLC},
   year={2025},
   url={https://github.com/yourusername/sdxl-dora-trainer},
   license={MIT}

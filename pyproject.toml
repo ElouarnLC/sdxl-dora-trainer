@@ -9,10 +9,10 @@ description = "Production-ready tool for fine-tuning SDXL models using DoRA"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-    {name = "SDXL DoRA Trainer Contributors"},
+    {name = "ElouarnLC"},
 ]
 maintainers = [
-    {name = "SDXL DoRA Trainer Contributors"},
+    {name = "ElouarnLC"},
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -69,11 +69,11 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/sdxl-dora-trainer"
-Documentation = "https://github.com/yourusername/sdxl-dora-trainer/docs"
-Repository = "https://github.com/yourusername/sdxl-dora-trainer"
-"Bug Tracker" = "https://github.com/yourusername/sdxl-dora-trainer/issues"
-Changelog = "https://github.com/yourusername/sdxl-dora-trainer/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/ElouarnLC/sdxl-dora-trainer"
+Documentation = "https://github.com/ElouarnLC/sdxl-dora-trainer/docs"
+Repository = "https://github.com/ElouarnLC/sdxl-dora-trainer"
+"Bug Tracker" = "https://github.com/ElouarnLC/sdxl-dora-trainer/issues"
+Changelog = "https://github.com/ElouarnLC/sdxl-dora-trainer/blob/main/CHANGELOG.md"
 
 [project.scripts]
 sdxl-dora-train = "sdxl_dora_trainer:main"

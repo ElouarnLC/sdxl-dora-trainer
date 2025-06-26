@@ -32,7 +32,7 @@ We welcome various types of contributions:
 
 ### Before You Start
 
-1. Check existing [issues](https://github.com/yourusername/sdxl-dora-trainer/issues) and [pull requests](https://github.com/yourusername/sdxl-dora-trainer/pulls)
+1. Check existing [issues](https://github.com/ElouarnLC/sdxl-dora-trainer/issues) and [pull requests](https://github.com/ElouarnLC/sdxl-dora-trainer/pulls)
 2. For major changes, open an issue first to discuss the proposed changes
 3. Make sure you have the necessary development environment set up
 
@@ -49,13 +49,13 @@ We welcome various types of contributions:
 1. **Fork the repository**
    ```bash
    # Click "Fork" on GitHub, then clone your fork
-   git clone https://github.com/yourusername/sdxl-dora-trainer.git
+   git clone https://github.com/ElouarnLC/sdxl-dora-trainer.git
    cd sdxl-dora-trainer
    ```
 
 2. **Add upstream remote**
    ```bash
-   git remote add upstream https://github.com/originalusername/sdxl-dora-trainer.git
+   git remote add upstream https://github.com/ElouarnLC/sdxl-dora-trainer.git
    ```
 
 3. **Create development environment**

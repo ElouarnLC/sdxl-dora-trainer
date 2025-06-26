@@ -32,7 +32,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/sdxl-dora-trainer.git
+git clone https://github.com/ElouarnLC/sdxl-dora-trainer.git
 cd sdxl-dora-trainer
 
 # Run automated setup
