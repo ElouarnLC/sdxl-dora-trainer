@@ -93,9 +93,10 @@ class TrainingConfig:
     # Scheduler
     lr_scheduler: str = "cosine"
     lr_warmup_steps: int = 100
-    
-    # Mixed precision and memory
-    mixed_precision: str = "no"  # fp16, bf16, no
+      # Mixed precision and memory
+    # IMPORTANT: fp16 often causes NaN/Inf issues with DoRA training, resulting in black images
+    # Use "no" for stable training, "bf16" if you have Ampere+ GPU and want speed
+    mixed_precision: str = "no"  # fp16, bf16, no (fp16 NOT recommended for DoRA)
     gradient_checkpointing: bool = True
     use_8bit_adam: bool = True
     
@@ -857,6 +858,19 @@ class DoRATrainer:
             if not self.test_base_pipeline():
                 raise RuntimeError("Base SDXL pipeline test failed - check your model and setup")
             
+            # Warn about fp16 issues with DoRA
+            if self.config.mixed_precision == "fp16":
+                console.print("[yellow]⚠️  WARNING: fp16 mixed precision often causes black images with DoRA training![/yellow]")
+                console.print("[yellow]   Consider using --mixed_precision no or --mixed_precision bf16 instead[/yellow]")
+                console.print("[yellow]   Continue? (y/N):[/yellow]", end=" ")
+                
+                import sys
+                response = input().strip().lower()
+                if response != 'y':
+                    console.print("[red]Training cancelled. Use --mixed_precision no for stable training.[/red]")
+                    sys.exit(1)
+                console.print("[yellow]   Continuing with fp16 - if you get black images, switch to mixed_precision=no[/yellow]")
+            
             # Training metrics
             global_step = 0
             total_loss = 0.0
@@ -1252,11 +1266,10 @@ Examples:
                        help="Weight decay (default: 0.01)")
     parser.add_argument("--max_grad_norm", type=float, default=1.0,
                        help="Maximum gradient norm (default: 1.0)")
-    
-    # Mixed precision and memory
-    parser.add_argument("--mixed_precision", type=str, default="fp16", 
+      # Mixed precision and memory
+    parser.add_argument("--mixed_precision", type=str, default="no", 
                        choices=["fp16", "bf16", "no"],
-                       help="Mixed precision training (default: fp16)")
+                       help="Mixed precision training (default: no) - fp16 often causes black images with DoRA")
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True,
                        help="Enable gradient checkpointing")
     parser.add_argument("--use_8bit_adam", action="store_true", default=True,

@@ -1,0 +1,71 @@
+# Example Configuration for Basic Training
+# This is a simple, stable configuration for getting started
+
+# Dataset and Model Configuration
+dataset_path: "./my_dataset"  # Path to your training images
+model_name: "stabilityai/stable-diffusion-xl-base-1.0"
+output_dir: "./output"
+cache_dir: "./cache"
+
+# DoRA Parameters (Conservative settings for stability)
+rank: 32                # Lower rank for smaller datasets
+alpha: 16               # Usually rank/2
+dropout: 0.1
+target_modules:
+  - "to_k"
+  - "to_q" 
+  - "to_v"
+  - "to_out.0"
+  - "proj_in"
+  - "proj_out"
+  - "ff.net.0.proj"
+  - "ff.net.2"
+
+# Training Parameters
+learning_rate: 5e-5     # Conservative learning rate
+batch_size: 1           # Adjust based on GPU memory
+gradient_accumulation_steps: 4
+max_train_steps: 1000   # Adjust based on dataset size
+warmup_steps: 100
+save_every: 250         # Save checkpoint every 250 steps
+validation_steps: 100   # Generate validation images every 100 steps
+
+# Image Parameters
+resolution: 1024        # Can use 512 or 768 for less memory
+center_crop: true
+random_flip: true
+
+# Optimization
+optimizer: "adamw"
+weight_decay: 0.01
+beta1: 0.9
+beta2: 0.999
+epsilon: 1e-8
+max_grad_norm: 1.0
+
+# Scheduler
+lr_scheduler: "cosine"
+lr_warmup_steps: 100
+
+# Memory and Performance - IMPORTANT FOR STABILITY
+mixed_precision: "no"   # Use "no" for stable training, "bf16" for speed
+gradient_checkpointing: true
+use_8bit_adam: true
+
+# Logging and Monitoring
+logging_dir: "./logs"
+log_level: "INFO"
+report_to: "tensorboard"  # Can be "wandb" or "none"
+project_name: "my-sdxl-project"
+run_name: null            # Auto-generated if null
+
+# Validation
+validation_prompts:
+  - "a beautiful landscape"
+  - "a portrait of a person"
+  - "a cute animal"
+
+# Advanced Options
+seed: 42                  # For reproducible results
+debug: false             # Enable for detailed logging
+resume_from_checkpoint: null  # Path to resume training

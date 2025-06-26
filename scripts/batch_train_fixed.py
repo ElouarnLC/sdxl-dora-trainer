@@ -16,8 +16,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-# Add the current directory to the path so we can import our modules
-sys.path.append(str(Path(__file__).parent))
+# Add the parent directory to the path so we can import our modules
+sys.path.append(str(Path(__file__).parent.parent))
 
 from sdxl_dora_trainer import DoRATrainer, TrainingConfig
 
@@ -52,6 +52,11 @@ class BatchTrainer:
         
         # Merge with job-specific config
         merged_config = {**base_config, **job_config}
+        
+        # Validate mixed_precision setting for stability
+        if merged_config.get('mixed_precision') == 'fp16':
+            console.print(f"[yellow]Warning: Job '{job_config.get('name', 'unknown')}' uses fp16 mixed precision[/yellow]")
+            console.print("[yellow]This may cause black images with DoRA training. Consider using 'no' or 'bf16'[/yellow]")
         
         # Create TrainingConfig object
         config = TrainingConfig()
@@ -177,7 +182,7 @@ def create_example_batch_config():
             "cache_dir": "./cache",
             "max_train_steps": 1000,
             "resolution": 1024,
-            "mixed_precision": "fp16",
+            "mixed_precision": "no",  # Changed from fp16 to avoid black image issues
             "gradient_checkpointing": True,
             "use_8bit_adam": True,
             "report_to": "tensorboard"

@@ -1,0 +1,66 @@
+# Memory-Optimized Configuration
+# For training on GPUs with limited VRAM (12GB or less)
+
+# Dataset and Model Configuration
+dataset_path: "./my_dataset"
+model_name: "stabilityai/stable-diffusion-xl-base-1.0"
+output_dir: "./output"
+cache_dir: "./cache"
+
+# DoRA Parameters (Minimal settings for memory efficiency)
+rank: 16                # Very low rank to reduce memory usage
+alpha: 8                # Usually rank/2
+dropout: 0.1
+target_modules:
+  - "to_k"
+  - "to_q"
+  - "to_v"
+  - "to_out.0"
+
+# Training Parameters
+learning_rate: 5e-5
+batch_size: 1           # Minimum batch size
+gradient_accumulation_steps: 8  # Compensate with more accumulation
+max_train_steps: 1500
+warmup_steps: 100
+save_every: 250
+validation_steps: 200
+
+# Image Parameters
+resolution: 768         # Lower resolution to save memory
+center_crop: true
+random_flip: true
+
+# Optimization
+optimizer: "adamw"
+weight_decay: 0.01
+beta1: 0.9
+beta2: 0.999
+epsilon: 1e-8
+max_grad_norm: 1.0
+
+# Scheduler
+lr_scheduler: "cosine"
+lr_warmup_steps: 100
+
+# Memory and Performance (Maximum optimization)
+mixed_precision: "no"   # Keep stable, don't use fp16
+gradient_checkpointing: true  # Essential for memory saving
+use_8bit_adam: true     # Reduces optimizer memory usage
+
+# Logging and Monitoring
+logging_dir: "./logs"
+log_level: "INFO"
+report_to: "tensorboard"
+project_name: "memory-optimized-training"
+run_name: null
+
+# Validation (Fewer prompts to save memory)
+validation_prompts:
+  - "a simple test image"
+  - "a basic portrait"
+
+# Advanced Options
+seed: 42
+debug: false
+resume_from_checkpoint: null

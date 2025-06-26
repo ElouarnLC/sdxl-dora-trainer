@@ -40,7 +40,8 @@ class SDXLDoRAInference:
                 return "cuda"
             elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
                 return "mps"
-            else:                return "cpu"
+            else:
+                return "cpu"
         return device
     
     def load_model(self):
@@ -55,20 +56,18 @@ class SDXLDoRAInference:
             
             # Load base pipeline
             task = progress.add_task("Loading base SDXL model...", total=None)
-            
-            # Load with better error handling and precision settings
+              # Load with better error handling and precision settings
             self.pipeline = StableDiffusionXLPipeline.from_pretrained(
                 self.base_model_path,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                torch_dtype=torch.float32,  # Always use float32 for stability
                 use_safetensors=True,
-                variant="fp16" if self.device == "cuda" else None,
+                variant=None,  # Don't use fp16 variant
                 safety_checker=None,
                 requires_safety_checker=False
             )
             
             progress.update(task, description="Base model loaded")
-            
-            # Load DoRA weights if provided
+              # Load DoRA weights if provided
             if self.dora_weights_path:
                 task = progress.add_task("Loading DoRA weights...", total=None)
                 
@@ -81,11 +80,20 @@ class SDXLDoRAInference:
                     if not weights_path.exists():
                         raise FileNotFoundError(f"DoRA weights path does not exist: {self.dora_weights_path}")
                     
+                    # Check for required files
+                    adapter_config = weights_path / "adapter_config.json"
+                    adapter_weights = weights_path / "adapter_model.safetensors"
+                    
+                    if not adapter_config.exists():
+                        raise FileNotFoundError(f"adapter_config.json not found in {self.dora_weights_path}")
+                    if not adapter_weights.exists():
+                        raise FileNotFoundError(f"adapter_model.safetensors not found in {self.dora_weights_path}")
+                    
                     # Load DoRA weights to UNet
                     self.pipeline.unet = PeftModel.from_pretrained(
                         self.pipeline.unet,
                         self.dora_weights_path,
-                        torch_dtype=torch.float16 if self.device == "cuda" else torch.float32
+                        torch_dtype=torch.float32  # Always use float32 for stability
                     )
                     
                     # Verify weights don't contain NaN or inf values
@@ -105,17 +113,29 @@ class SDXLDoRAInference:
                     if nan_count > 0 or inf_count > 0:
                         console.print(f"[red]Warning: DoRA weights contain {nan_count} NaN and {inf_count} Inf values out of {total_params} parameters[/red]")
                         console.print("[red]This may cause black/corrupted image generation[/red]")
+                        console.print("[cyan]Consider using the fix_dora_weights.py script to repair the weights[/cyan]")
                         
                         # Option to continue with a warning
                         response = input("Continue anyway? (y/N): ").strip().lower()
                         if response != 'y':
                             raise ValueError("DoRA weights contain invalid values")
+                    else:
+                        console.print(f"[green]✓[/green] DoRA weights validated ({total_params:,} parameters)")
                     
                     progress.update(task, description="DoRA weights loaded and validated")
                     
                 except Exception as e:
                     console.print(f"[red]Failed to load DoRA weights: {e}[/red]")
                     console.print("[yellow]Continuing with base model only[/yellow]")
+                    # Reset pipeline to base model if DoRA loading failed
+                    self.pipeline = StableDiffusionXLPipeline.from_pretrained(
+                        self.base_model_path,
+                        torch_dtype=torch.float32,
+                        use_safetensors=True,
+                        variant=None,
+                        safety_checker=None,
+                        requires_safety_checker=False
+                    )
                     
             else:
                 console.print("[yellow]No DoRA weights specified, using base model only[/yellow]")
@@ -153,11 +173,11 @@ class SDXLDoRAInference:
         
         if self.pipeline is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
-        
-        # Setup output directory
+          # Setup output directory
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-          # Set seed for reproducibility
+        
+        # Set seed for reproducibility
         if seed is not None:
             torch.manual_seed(seed)
         
@@ -172,28 +192,31 @@ class SDXLDoRAInference:
                 console.print(f"\n[cyan]Prompt {i+1}:[/cyan] {prompt}")
                 
                 try:
-                    # Generate images with better error handling
-                    with torch.autocast(self.device):
-                        # Check model parameters before generation
-                        has_invalid = False
-                        for name, param in self.pipeline.unet.named_parameters():
-                            if torch.isnan(param).any() or torch.isinf(param).any():
-                                console.print(f"[red]Warning: Invalid values in {name}[/red]")
-                                has_invalid = True
-                        
-                        if has_invalid:
-                            console.print("[yellow]Proceeding with generation despite invalid parameters[/yellow]")
-                        
-                        result = self.pipeline(
-                            prompt=prompt,
-                            negative_prompt=negative_prompt,
-                            num_images_per_prompt=num_images_per_prompt,
-                            num_inference_steps=num_inference_steps,
-                            guidance_scale=guidance_scale,
-                            width=width,
-                            height=height,
-                            generator=torch.Generator(device=self.device).manual_seed(seed) if seed is not None else None
-                        )
+                    # Generate images with conservative settings to avoid black images
+                    # Don't use autocast to prevent precision issues
+                    
+                    # Check model parameters before generation
+                    has_invalid = False
+                    for name, param in self.pipeline.unet.named_parameters():
+                        if torch.isnan(param).any() or torch.isinf(param).any():
+                            console.print(f"[red]Warning: Invalid values in {name}[/red]")
+                            has_invalid = True
+                    
+                    if has_invalid:
+                        console.print("[yellow]Proceeding with generation despite invalid parameters[/yellow]")
+                        console.print("[yellow]Consider using the fix_dora_weights.py script[/yellow]")
+                    
+                    # Generate with stable settings
+                    result = self.pipeline(
+                        prompt=prompt,
+                        negative_prompt=negative_prompt,
+                        num_images_per_prompt=num_images_per_prompt,
+                        num_inference_steps=num_inference_steps,
+                        guidance_scale=guidance_scale,
+                        width=width,
+                        height=height,
+                        generator=torch.Generator(device=self.device).manual_seed(seed) if seed is not None else None
+                    )
                     
                     images = result.images
                     
@@ -280,6 +303,8 @@ def main():
                        help="Base SDXL model path")
     parser.add_argument("--dora_weights", type=str, default=None,
                        help="Path to DoRA weights")
+    parser.add_argument("--validate_weights", action="store_true",
+                       help="Validate DoRA weights and exit (don't generate images)")
     parser.add_argument("--device", type=str, default="auto",
                        choices=["auto", "cuda", "cpu", "mps"],
                        help="Device to use")
@@ -317,15 +342,85 @@ def main():
         console.print("[red]Error: Either --prompt, --prompts_file, or --interactive must be specified[/red]")
         parser.print_help()
         sys.exit(1)
-    
-    # Create inference object
+      # Create inference object
     inference = SDXLDoRAInference(
         base_model_path=args.base_model,
         dora_weights_path=args.dora_weights,
         device=args.device
     )
     
-    # Load model
+    # Handle weight validation mode
+    if args.validate_weights:
+        if not args.dora_weights:
+            console.print("[red]Error: --dora_weights required for validation[/red]")
+            sys.exit(1)
+        
+        console.print(Panel("[bold blue]DoRA Weight Validation Mode[/bold blue]"))
+        
+        try:
+            # Load base model first
+            console.print("[cyan]Loading base model for validation...[/cyan]")
+            inference.pipeline = StableDiffusionXLPipeline.from_pretrained(
+                args.base_model,
+                torch_dtype=torch.float32,
+                use_safetensors=True,
+                variant=None,
+                safety_checker=None,
+                requires_safety_checker=False
+            )
+            
+            # Try to load DoRA weights
+            console.print(f"[cyan]Validating DoRA weights: {args.dora_weights}[/cyan]")
+            weights_path = Path(args.dora_weights)
+            
+            if not weights_path.exists():
+                console.print(f"[red]Error: DoRA weights path does not exist: {args.dora_weights}[/red]")
+                sys.exit(1)
+            
+            # Check for required files
+            adapter_config = weights_path / "adapter_config.json"
+            adapter_weights = weights_path / "adapter_model.safetensors"
+            
+            if not adapter_config.exists():
+                console.print(f"[red]Error: adapter_config.json not found in {args.dora_weights}[/red]")
+                sys.exit(1)
+            if not adapter_weights.exists():
+                console.print(f"[red]Error: adapter_model.safetensors not found in {args.dora_weights}[/red]")
+                sys.exit(1)
+            
+            # Load and validate weights
+            from peft import PeftModel
+            unet_with_dora = PeftModel.from_pretrained(
+                inference.pipeline.unet,
+                args.dora_weights,
+                torch_dtype=torch.float32
+            )
+            
+            # Check for NaN/Inf values
+            nan_count = 0
+            inf_count = 0
+            total_params = 0
+            
+            for name, param in unet_with_dora.named_parameters():
+                total_params += param.numel()
+                if torch.isnan(param).any():
+                    nan_count += torch.isnan(param).sum().item()
+                if torch.isinf(param).any():
+                    inf_count += torch.isinf(param).sum().item()
+            
+            if nan_count > 0 or inf_count > 0:
+                console.print(f"[red]VALIDATION FAILED: DoRA weights contain {nan_count} NaN and {inf_count} Inf values[/red]")
+                console.print("[yellow]Consider using scripts/fix_dora_weights.py to repair the weights[/yellow]")
+                sys.exit(1)
+            else:
+                console.print(f"[green]VALIDATION PASSED: DoRA weights are valid ({total_params:,} parameters)[/green]")
+                sys.exit(0)
+                
+        except Exception as e:
+            console.print(f"[red]VALIDATION FAILED: {e}[/red]")
+            sys.exit(1)
+    
+    # Load model for normal inference
     try:
         inference.load_model()
     except Exception as e:

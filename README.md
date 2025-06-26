@@ -2,7 +2,13 @@
 
 A production-ready tool for fine-tuning Stable Diffusion XL models using **DoRA (Weight-Decomposed Low-Rank Adaptation)**, which is more efficient and effective than traditional LoRA.
 
-## 🚀 Features
+## � Important: Black Image Issue Fixed!
+
+**If you're experiencing black/empty images during generation, see [docs/BLACK_IMAGE_FIX.md](docs/BLACK_IMAGE_FIX.md) for the solution!**
+
+**TL;DR:** Use `--mixed_precision no` instead of `fp16` to fix black image generation with DoRA.
+
+## �🚀 Features
 
 - **DoRA Integration**: Uses the latest DoRA technique for more efficient fine-tuning
 - **Production Ready**: Robust error handling, logging, and monitoring
@@ -72,7 +78,7 @@ python utils.py check-env
 ### 3. Analyze Your Dataset
 
 ```bash
-python utils.py analyze-dataset --dataset ./my_dataset
+python scripts/validate_dataset.py --dataset ./my_dataset
 ```
 
 ### 4. Get Training Suggestions
@@ -96,10 +102,9 @@ python sdxl_dora_trainer.py \
   --rank 128 \
   --alpha 64 \
   --learning_rate 5e-5 \
-  --batch_size 2 \
-  --max_train_steps 2000 \
+  --batch_size 2 \  --max_train_steps 2000 \
   --resolution 1024 \
-  --mixed_precision fp16 \
+  --mixed_precision no \
   --report_to wandb \
   --project_name my-sdxl-project
 ```
@@ -123,7 +128,7 @@ python sdxl_dora_trainer.py --config config.yaml
 | `batch_size` | Batch size | 1 | Increase based on GPU memory |
 | `max_train_steps` | Training steps | 1000 | 500-3000 based on dataset |
 | `resolution` | Image resolution | 1024 | 512, 768, or 1024 |
-| `mixed_precision` | Precision mode | fp16 | fp16 for speed, bf16 for stability |
+| `mixed_precision` | Precision mode | no | no for stability, bf16 for speed |
 
 ### Full Configuration Example
 
@@ -146,7 +151,7 @@ max_train_steps: 2000
 resolution: 1024
 
 # Memory Optimization
-mixed_precision: "fp16"
+mixed_precision: "no"  # Use "no" for stability, "bf16" for speed
 gradient_checkpointing: true
 use_8bit_adam: true
 
@@ -165,7 +170,7 @@ Validates your environment, checks GPU memory, and lists system information.
 
 ### Dataset Analysis
 ```bash
-python utils.py analyze-dataset --dataset ./my_images
+python scripts/validate_dataset.py --dataset ./my_images
 ```
 Analyzes your dataset and provides statistics on images, captions, and sizes.
 
@@ -201,6 +206,32 @@ During training, the tool will:
 - Generate validation images every 100 steps
 - Log training metrics continuously
 - Display progress with rich terminal interface
+
+## 📁 Output Structure
+
+After training, your output directory will look like this:
+
+```
+output/
+├── checkpoints/                    # Model checkpoints
+│   ├── checkpoint-250/
+│   │   ├── adapter_config.json
+│   │   ├── adapter_model.safetensors
+│   │   └── training_args.bin
+│   ├── checkpoint-500/
+│   └── ...
+├── samples/                        # Validation images
+│   ├── step_100/
+│   ├── step_200/
+│   └── ...
+└── final_model/                    # Final trained model
+    ├── adapter_config.json
+    └── adapter_model.safetensors
+
+logs/
+├── tensorboard_logs/               # TensorBoard logs
+└── training.log                    # Text logs
+```
 
 ## 🎯 DoRA vs LoRA
 
@@ -241,16 +272,23 @@ DoRA (Weight-Decomposed Low-Rank Adaptation) offers several advantages over trad
 --batch_size 1 --gradient_accumulation_steps 8
 
 # Enable memory optimizations
---gradient_checkpointing --use_8bit_adam --mixed_precision fp16
+--gradient_checkpointing --use_8bit_adam --mixed_precision no
 
 # Use lower resolution
 --resolution 768
 ```
 
+**Black Images During Generation**
+See [docs/BLACK_IMAGE_FIX.md](docs/BLACK_IMAGE_FIX.md) for the complete solution.
+```bash
+# Quick fix: use mixed_precision no
+--mixed_precision no
+```
+
 **Training Too Slow**
 ```bash
-# Use mixed precision
---mixed_precision fp16
+# Use mixed precision (if stable)
+--mixed_precision bf16
 
 # Increase batch size if possible
 --batch_size 2
@@ -280,22 +318,55 @@ pip install -r requirements.txt --force-reinstall
 python utils.py check-env
 ```
 
-## 📁 Output Structure
+## 📁 Repository Structure
 
 ```
-output/
-├── checkpoints/
-│   ├── checkpoint-250/
-│   ├── checkpoint-500/
-│   └── ...
-├── samples/
-│   ├── step_100/
-│   ├── step_200/
-│   └── ...
-└── final_model/
-logs/
-├── tensorboard_logs/
-└── training.log
+sdxl-dora-trainer/
+├── 📄 README.md                    # Main documentation
+├── 📄 LICENSE                      # MIT License
+├── 📄 CHANGELOG.md                 # Version history
+├── 📄 pyproject.toml               # Modern Python packaging
+├── 📄 setup.cfg                    # Setup configuration
+├── 📄 requirements.txt             # Production dependencies
+├── 📄 requirements-dev.txt         # Development dependencies
+├── 📄 .gitignore                   # Git ignore rules
+│
+├── 📄 sdxl_dora_trainer.py         # Main training script
+├── 📄 inference.py                 # Inference script
+├── 📄 config_manager.py            # Configuration management
+├── 📄 utils.py                     # Utility functions
+├── 📄 setup.py                     # Automated setup script
+│
+├── 📂 docs/                        # Documentation
+│   ├── 📄 BLACK_IMAGE_FIX.md       # ⚠️ IMPORTANT: Black image fix
+│   ├── 📄 INSTALLATION.md          # Installation guide
+│   ├── 📄 API.md                   # API reference
+│   └── 📄 CONTRIBUTING.md          # Contributing guidelines
+│
+├── 📂 examples/                    # Example configurations
+│   ├── 📄 basic_config.yaml        # Basic training config
+│   ├── 📄 advanced_config.yaml     # Advanced training config
+│   ├── 📄 memory_optimized_config.yaml # Low-memory config
+│   ├── 📄 train_example.py         # Training example script
+│   └── 📄 inference_example.py     # Inference example script
+│
+├── 📂 scripts/                     # Utility scripts
+│   ├── 📄 validate_dataset.py      # Dataset validation
+│   ├── 📄 debug_dora_weights.py    # Debug DoRA weights
+│   ├── 📄 fix_dora_weights.py      # Fix corrupted weights
+│   └── 📄 batch_train.py           # Batch training script
+│
+├── 📂 tests/                       # Test suite
+│   ├── 📄 test_setup.py            # Setup tests
+│   ├── 📄 test_device_allocation.py # GPU tests
+│   ├── 📄 test_sdxl_simple.py      # SDXL tests
+│   └── 📄 test_vae_encoding.py     # VAE tests
+│
+└── 📂 .github/                     # GitHub specific files
+    ├── 📂 ISSUE_TEMPLATE/
+    │   ├── 📄 bug_report.md
+    │   └── 📄 feature_request.md
+    └── 📄 pull_request_template.md
 ```
 
 ## 🤝 Contributing
@@ -328,9 +399,10 @@ If you use this tool in your research, please cite:
 ```bibtex
 @software{sdxl_dora_trainer,
   title={SDXL DoRA Trainer: Production-Ready Fine-tuning Tool},
-  author={AI Research Community},
-  year={2024},
-  url={https://github.com/your-username/sdxl-dora-trainer}
+  author={Your Name and Contributors},
+  year={2025},
+  url={https://github.com/yourusername/sdxl-dora-trainer},
+  license={MIT}
 }
 ```
 
