@@ -69,9 +69,8 @@ class TrainingConfig:
         "proj_in", "proj_out",
         "ff.net.0.proj", "ff.net.2"
     ])
-    
-    # Training parameters
-    learning_rate: float = 1e-4
+      # Training parameters
+    learning_rate: float = 5e-5  # Reduced from 1e-4 for better stability
     batch_size: int = 1
     gradient_accumulation_steps: int = 4
     max_train_steps: int = 1000
@@ -115,10 +114,9 @@ class TrainingConfig:
         "abstract art"
     ])
     num_validation_images: int = 4
-    validation_steps: int = 100
-      # Safety and debugging
+    validation_steps: int = 100    # Safety and debugging
     enable_safety_checker: bool = True
-    debug: bool = False
+    debug: bool = True  # Enable debug mode to help diagnose NaN issues
     resume_from_checkpoint: Optional[str] = None
     seed: Optional[int] = None
 
@@ -527,20 +525,30 @@ class DoRATrainer:
             
             # Ensure input images are in the correct dtype and device
             pixel_values = batch["pixel_values"].to(self.accelerator.device, dtype=target_dtype)
-            
-            # Encode images to latent space
+              # Encode images to latent space
             with torch.no_grad():
+                # Clamp pixel values to valid range
+                pixel_values = torch.clamp(pixel_values, -1.0, 1.0)
+                
                 latents = self.vae.encode(pixel_values).latent_dist.sample()
                 latents = latents * self.vae.config.scaling_factor
+                
+                # Check for NaN in latents
+                if torch.isnan(latents).any():
+                    self.logger.warning("NaN detected in VAE latents - skipping batch")
+                    return torch.tensor(0.0, device=pixel_values.device, requires_grad=True)
             
             # Add noise to latents
             noise = torch.randn_like(latents, dtype=target_dtype, device=latents.device)
+            # Clamp noise to prevent extreme values
+            noise = torch.clamp(noise, -3.0, 3.0)
+            
             timesteps = torch.randint(
                 0, self.noise_scheduler.config.num_train_timesteps,
                 (latents.shape[0],), device=latents.device
             ).long()
             
-            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)            # Encode text with both encoders
+            noisy_latents = self.noise_scheduler.add_noise(latents, noise, timesteps)# Encode text with both encoders
             with torch.no_grad():
                 input_ids = batch["input_ids"].to(self.accelerator.device)
                 attention_mask = batch.get("attention_mask", None)
@@ -564,12 +572,17 @@ class DoRATrainer:
                 )
                 prompt_embeds_2 = encoder_output_2.last_hidden_state
                 pooled_prompt_embeds = encoder_output_2.pooler_output
-                
-                # For SDXL, we concatenate the text embeddings along the feature dimension
+                  # For SDXL, we concatenate the text embeddings along the feature dimension
                 # Make sure both have the same sequence length
                 seq_len = min(prompt_embeds_1.shape[1], prompt_embeds_2.shape[1])
                 prompt_embeds_1 = prompt_embeds_1[:, :seq_len, :]
                 prompt_embeds_2 = prompt_embeds_2[:, :seq_len, :]
+                
+                # Debug: Print embedding shapes
+                if self.config.debug:
+                    self.logger.debug(f"prompt_embeds_1 shape: {prompt_embeds_1.shape}")
+                    self.logger.debug(f"prompt_embeds_2 shape: {prompt_embeds_2.shape}")
+                    self.logger.debug(f"pooled_prompt_embeds shape: {pooled_prompt_embeds.shape}")
                 
                 # Concatenate along the feature dimension (768 + 1280 = 2048)
                 encoder_hidden_states = torch.cat([prompt_embeds_1, prompt_embeds_2], dim=-1)
@@ -593,8 +606,7 @@ class DoRATrainer:
                 "text_embeds": pooled_prompt_embeds.to(target_dtype),
                 "time_ids": torch.cat([original_size, crops_coords_top_left, target_size], dim=1).to(target_dtype)
             }
-            
-            # Predict noise
+              # Predict noise
             model_pred = self.model(
                 noisy_latents,
                 timesteps,
@@ -602,8 +614,22 @@ class DoRATrainer:
                 added_cond_kwargs=added_cond_kwargs
             ).sample
             
-            # Compute loss (ensure both tensors have the same dtype)
+            # Debug: Check for NaN values
+            if self.config.debug:
+                self.logger.debug(f"model_pred stats: min={model_pred.min():.4f}, max={model_pred.max():.4f}, has_nan={torch.isnan(model_pred).any()}")
+                self.logger.debug(f"noise stats: min={noise.min():.4f}, max={noise.max():.4f}, has_nan={torch.isnan(noise).any()}")
+            
+            # Check for NaN values and handle them
+            if torch.isnan(model_pred).any() or torch.isnan(noise).any():
+                self.logger.warning("NaN detected in model prediction or noise - skipping this batch")
+                return torch.tensor(0.0, device=model_pred.device, requires_grad=True)
+            
+            # Compute loss (ensure both tensors have the same dtype and are finite)
             loss = F.mse_loss(model_pred.float(), noise.float(), reduction="mean")
+              # Check if loss is finite
+            if not torch.isfinite(loss):
+                self.logger.warning(f"Non-finite loss detected: {loss}, replacing with zero")
+                loss = torch.tensor(0.0, device=loss.device, requires_grad=True)
             
             return loss
             
@@ -616,12 +642,18 @@ class DoRATrainer:
         try:
             self.model.eval()
             
+            # Get the base UNet from the PEFT model
+            base_unet = self.accelerator.unwrap_model(self.model)
+            if hasattr(base_unet, 'get_base_model'):
+                base_unet = base_unet.get_base_model()
+            
             # Create validation pipeline
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 self.config.model_name,
-                unet=self.accelerator.unwrap_model(self.model),
+                unet=base_unet,
                 torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32,
-                safety_checker=None if not self.config.enable_safety_checker else "default"
+                safety_checker=None,
+                requires_safety_checker=False
             )
             pipeline = pipeline.to(self.accelerator.device)
             
@@ -738,14 +770,14 @@ class DoRATrainer:
                             self.optimizer.step()
                             self.lr_scheduler.step()
                             self.optimizer.zero_grad()
-                        
-                        # Update metrics
-                        total_loss += loss.detach().item()
+                          # Update metrics
+                        if torch.isfinite(loss):
+                            total_loss += loss.detach().item()
                         global_step += 1
                         
                         # Logging
                         if global_step % 10 == 0:
-                            avg_loss = total_loss / min(global_step, 10)
+                            avg_loss = total_loss / min(global_step, 10) if total_loss > 0 else 0.0
                             lr = self.lr_scheduler.get_last_lr()[0]
                             
                             progress.update(
