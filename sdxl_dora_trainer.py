@@ -229,8 +229,13 @@ class DoRATrainer:
         self.train_dataloader = None
         self.tokenizer = None
         self.text_encoder = None
+        self.text_encoder_2 = None
         self.vae = None
         self.noise_scheduler = None
+        
+        # Training state tracking
+        self.consecutive_failures = 0
+        self.max_consecutive_failures = 50  # Stop training after 50 consecutive failures
         
         # Setup logging
         self._setup_logging()
@@ -297,13 +302,12 @@ class DoRATrainer:
                 cache_dir=self.config.cache_dir,
                 torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32
             )
-            
-            # Load VAE
+              # Load VAE (always use float32 to avoid NaN issues)
             self.vae = AutoencoderKL.from_pretrained(
                 self.config.model_name,
                 subfolder="vae",
                 cache_dir=self.config.cache_dir,
-                torch_dtype=torch.float16 if self.config.mixed_precision == "fp16" else torch.float32
+                torch_dtype=torch.float32  # Always use float32 for VAE to prevent NaN
             )
             
             # Load UNet
@@ -327,7 +331,8 @@ class DoRATrainer:
             self.vae.eval()
             self.text_encoder.eval()
             self.text_encoder_2.eval()
-              # Enable gradient checkpointing
+            
+            # Enable gradient checkpointing
             if self.config.gradient_checkpointing:
                 self.model.enable_gradient_checkpointing()
                 if hasattr(self.text_encoder, "gradient_checkpointing_enable"):
@@ -535,23 +540,44 @@ class DoRATrainer:
             pixel_values = batch["pixel_values"].to(self.accelerator.device, dtype=target_dtype)            # Encode images to latent space
             with torch.no_grad():
                 # Ensure pixel values are in valid range for VAE
-                pixel_values = torch.clamp(pixel_values, -1.0, 1.0)
-                
-                # Debug: Check input pixel values
+                pixel_values = torch.clamp(pixel_values, -1.0, 1.0)                # Debug: Check input pixel values
                 if self.config.debug:
                     self.logger.debug(f"pixel_values stats: min={pixel_values.min():.3f}, max={pixel_values.max():.3f}, shape={pixel_values.shape}")
+                    self.logger.debug(f"pixel_values dtype: {pixel_values.dtype}, device: {pixel_values.device}")
+                    self.logger.debug(f"VAE dtype: {next(self.vae.parameters()).dtype}, device: {next(self.vae.parameters()).device}")
                 
-                latents = self.vae.encode(pixel_values).latent_dist.sample()
-                latents = latents * self.vae.config.scaling_factor
-                
-                # Check for NaN in latents - if found, try to recover
+                # Try VAE encoding with error handling
+                try:
+                    # Ensure pixel values are in float32 for VAE to avoid precision issues
+                    pixel_values_for_vae = pixel_values.float()
+                    latents = self.vae.encode(pixel_values_for_vae).latent_dist.sample()
+                    latents = latents * self.vae.config.scaling_factor
+                    
+                    # Convert back to target dtype
+                    latents = latents.to(target_dtype)
+                    
+                except Exception as e:
+                    self.logger.error(f"VAE encoding failed: {e}")
+                    return None
+                  # Check for NaN in latents
                 if torch.isnan(latents).any():
-                    self.logger.warning("NaN detected in VAE latents - attempting recovery")
-                    # Replace NaN with zeros
-                    latents = torch.where(torch.isnan(latents), torch.zeros_like(latents), latents)
-                    if torch.isnan(latents).any():  # If still NaN, skip
-                        self.logger.error("Unable to recover from NaN latents - data issue detected")
-                        return None  # Signal to skip this batch
+                    self.consecutive_failures += 1
+                    self.logger.error(f"NaN detected in VAE latents (failure #{self.consecutive_failures})")
+                    
+                    if self.consecutive_failures >= self.max_consecutive_failures:
+                        self.logger.error(f"Training stopped: {self.consecutive_failures} consecutive failures detected")
+                        self.logger.error("This indicates a systematic issue with your dataset or VAE processing")
+                        self.logger.error("Please check your images and ensure they are valid")
+                        raise RuntimeError(f"Too many consecutive failures ({self.consecutive_failures})")
+                    
+                    if self.config.debug:
+                        self.logger.debug(f"Original latents shape: {latents.shape}")
+                        self.logger.debug(f"NaN count: {torch.isnan(latents).sum().item()}")
+                        self.logger.debug(f"Inf count: {torch.isinf(latents).sum().item()}")
+                    return None  # Skip this batch
+                
+                # Reset failure counter on success
+                self.consecutive_failures = 0
                 
                 # Debug: Check latent values
                 if self.config.debug:
@@ -742,14 +768,17 @@ class DoRATrainer:
         """Main training loop."""
         console.print(Panel("[bold green]Starting DoRA Training[/bold green]"))
         
-        try:
-            # Setup everything
+        try:            # Setup everything
             self._load_models()
             self._setup_dora()
             self._create_dataset()
             self._setup_optimizer()
             self._setup_accelerator()
             self._setup_logging_tools()
+            
+            # Test VAE encoding to catch issues early
+            if not self.test_vae_encoding():
+                raise RuntimeError("VAE encoding test failed - training cannot proceed")
             
             # Training metrics
             global_step = 0
@@ -851,6 +880,32 @@ class DoRATrainer:
             # Cleanup
             if self.accelerator:
                 self.accelerator.end_training()
+
+    def test_vae_encoding(self):
+        """Test VAE encoding with sample data to diagnose issues."""
+        try:
+            console.print("[yellow]Testing VAE encoding...[/yellow]")
+            
+            # Create test data
+            test_batch = torch.randn(1, 3, 1024, 1024, device=self.accelerator.device, dtype=torch.float32)
+            test_batch = torch.clamp(test_batch, -1.0, 1.0)
+            
+            with torch.no_grad():
+                # Test VAE encoding
+                latents = self.vae.encode(test_batch).latent_dist.sample()
+                latents = latents * self.vae.config.scaling_factor
+                
+                # Check results
+                if torch.isnan(latents).any():
+                    self.logger.error("VAE test failed: NaN detected with synthetic data")
+                    return False
+                
+                console.print(f"[green]✓[/green] VAE test passed. Latents shape: {latents.shape}, range: [{latents.min():.3f}, {latents.max():.3f}]")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"VAE test failed: {e}")
+            return False
 
 def create_config_from_args(args) -> TrainingConfig:
     """Create training configuration from command line arguments."""
