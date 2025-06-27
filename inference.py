@@ -232,8 +232,7 @@ class SDXLDoRAInference:
                             console.print("[yellow]This may indicate an issue with the DoRA weights[/yellow]")
                     
                     all_images.extend(images)
-                    
-                    # Save images
+                      # Save images
                     for j, image in enumerate(images):
                         filename = f"prompt_{i+1:03d}_image_{j+1:02d}.png"
                         image_path = output_path / filename
@@ -249,10 +248,12 @@ class SDXLDoRAInference:
         
         console.print(f"\n[green]✓[/green] Generated {len(all_images)} images in {output_dir}")
         return all_images
-    
+
     def interactive_mode(self):
         """Interactive generation mode."""
         console.print(Panel("[bold green]Interactive Mode[/bold green]\nType 'quit' to exit"))
+        
+        prompt_counter = 1  # Counter for incremental naming
         
         while True:
             try:
@@ -272,20 +273,36 @@ class SDXLDoRAInference:
                     guidance = input("Guidance scale (default 7.5): ").strip()
                     guidance = float(guidance) if guidance else 7.5
                     
-                    seed_input = input("Seed (optional): ").strip()
-                    seed = int(seed_input) if seed_input else None
+                    seed_input = input("Seed (optional, random if empty): ").strip()
+                    if seed_input:
+                        seed = int(seed_input)
+                    else:
+                        # Generate a random seed if none provided
+                        import random
+                        seed = random.randint(0, 2**32 - 1)
+                        console.print(f"[cyan]Using random seed: {seed}[/cyan]")
                     
                 except ValueError:
                     console.print("[yellow]Invalid input, using defaults[/yellow]")
-                    steps, guidance, seed = 50, 7.5, None
+                    steps, guidance = 50, 7.5
+                    # Generate random seed for defaults too
+                    import random
+                    seed = random.randint(0, 2**32 - 1)
+                    console.print(f"[cyan]Using random seed: {seed}[/cyan]")
+                
+                # Create unique output directory for this prompt to avoid overwriting
+                interactive_output_dir = f"./generated_images/interactive_prompt_{prompt_counter:03d}"
                 
                 # Generate
                 self.generate_images(
                     prompts=[prompt],
                     num_inference_steps=steps,
                     guidance_scale=guidance,
-                    seed=seed
+                    seed=seed,
+                    output_dir=interactive_output_dir
                 )
+                
+                prompt_counter += 1  # Increment for next prompt
                 
             except KeyboardInterrupt:
                 console.print("\n[yellow]Exiting interactive mode[/yellow]")

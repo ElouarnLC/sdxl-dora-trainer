@@ -839,6 +839,62 @@ class DoRATrainer:
         except Exception as e:
             self.logger.error(f"Failed to save checkpoint: {e}")
     
+    def save_final_model(self, step: int):
+        """Save the final trained model in a dedicated final_model folder."""
+        try:
+            final_model_dir = Path(self.config.output_dir) / "final_model"
+            final_model_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save DoRA weights
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_model.save_pretrained(final_model_dir)
+            
+            # Save config for inference
+            with open(final_model_dir / "training_config.json", "w") as f:
+                json.dump(self.config.__dict__, f, indent=2, default=str)
+            
+            # Create a README for the final model
+            readme_content = f"""# Final DoRA Model
+
+This directory contains the final trained DoRA weights.
+
+## Training Details
+- Total training steps: {step}
+- Dataset: {self.config.dataset_path}
+- DoRA rank: {self.config.rank}
+- DoRA alpha: {self.config.alpha}
+- Learning rate: {self.config.learning_rate}
+- Resolution: {self.config.resolution}x{self.config.resolution}
+
+## Usage
+Use these weights with the inference script:
+
+```bash
+python inference.py --dora_weights {final_model_dir.absolute()}
+```
+
+## Files
+- `adapter_config.json`: DoRA configuration
+- `adapter_model.safetensors`: DoRA weights
+- `training_config.json`: Training configuration used
+- `README.md`: This file
+"""
+            
+            with open(final_model_dir / "README.md", "w") as f:
+                f.write(readme_content)
+            
+            console.print(f"[green]✓[/green] Final model saved to: {final_model_dir}")
+            
+            # Also create a sample validation image if possible
+            try:
+                self.validate(step)
+                console.print("[green]✓[/green] Final validation samples generated")
+            except Exception as e:
+                self.logger.warning(f"Could not generate final validation samples: {e}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save final model: {e}")
+
     def train(self):
         """Main training loop."""
         console.print(Panel("[bold green]Starting DoRA Training[/bold green]"))
@@ -952,17 +1008,26 @@ class DoRATrainer:
                     
                     if global_step >= self.config.max_train_steps:
                         break
-            
-            # Final checkpoint and validation
+              # Final checkpoint and validation
             self.save_checkpoint(global_step)
             self.validate(global_step)
             
+            # Save final model
+            self.save_final_model(global_step)
+            
             console.print(Panel("[bold green]Training Complete![/bold green]"))
-            console.print(f"Final model saved to: {self.config.output_dir}")
+            console.print(f"Final model saved to: {Path(self.config.output_dir) / 'final_model'}")
+            console.print(f"Checkpoints saved to: {Path(self.config.output_dir) / 'checkpoints'}")
             
         except KeyboardInterrupt:
             console.print("\n[yellow]Training interrupted by user[/yellow]")
             self.save_checkpoint(global_step)
+            # Also save final model when interrupted
+            try:
+                self.save_final_model(global_step)
+                console.print(f"[yellow]Final model saved despite interruption to: {Path(self.config.output_dir) / 'final_model'}[/yellow]")
+            except Exception as e:
+                self.logger.warning(f"Could not save final model after interruption: {e}")
         except Exception as e:
             self.logger.error(f"Training failed: {e}")
             traceback.print_exc()
