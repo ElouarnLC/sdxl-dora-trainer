@@ -1,0 +1,27 @@
+# Core dependencies for DSPO + SDXL training
+torch>=2.0.0
+torchvision>=0.15.0
+diffusers>=0.24.0
+transformers>=4.35.0
+accelerate>=0.24.0
+peft>=0.7.0
+
+# Computer vision and CLIP
+open-clip-torch>=2.24.0
+pillow>=10.0.0
+
+# Optimization and hyperparameter tuning
+optuna>=3.5.0
+
+# Data handling
+pandas>=2.0.0
+numpy>=1.24.0
+jsonlines>=3.1.0
+
+# Utilities
+tqdm>=4.65.0
+wandb>=0.16.0
+tensorboard>=2.15.0
+safetensors>=0.4.0
+pyyaml>=6.0.0
+scikit-learn>=1.3.0

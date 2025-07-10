@@ -1,0 +1,3 @@
+{"prompt": "A serene mountain landscape at sunset", "img_pos": "data/images/1/00000000-0000-0000-0000-000000000000.png", "img_neg": "data/images/1/00000000-0000-0000-0000-000000000001.png", "label": 1.0}
+{"prompt": "A futuristic city with flying cars", "img_pos": "data/images/2/00000000-0000-0000-0000-000000000002.png", "img_neg": "data/images/2/00000000-0000-0000-0000-000000000003.png", "label": 1.0}
+{"prompt": "A portrait of a wise old wizard", "img_pos": "data/images/3/00000000-0000-0000-0000-000000000004.png", "img_neg": "data/images/3/00000000-0000-0000-0000-000000000005.png", "label": 1.0}
