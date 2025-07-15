@@ -15,6 +15,7 @@ import pandas as pd
 import torch
 from diffusers import StableDiffusionXLPipeline
 from PIL import Image
+from peft import PeftModel
 from tqdm import tqdm
 
 # Configure logging
@@ -29,6 +30,7 @@ def setup_pipeline(
     model_name: str = "stabilityai/stable-diffusion-xl-base-1.0",
     device: str = "auto",
     torch_dtype: torch.dtype = torch.float16,
+    dora_weights_path: str = None,
 ) -> StableDiffusionXLPipeline:
     """
     Set up SDXL pipeline for image generation.
@@ -41,6 +43,8 @@ def setup_pipeline(
         Device to use ("auto", "cuda", "cpu")
     torch_dtype : torch.dtype
         Torch dtype for model
+    dora_weights_path : str, optional
+        Path to DoRA weights directory
         
     Returns
     -------
@@ -52,18 +56,55 @@ def setup_pipeline(
     
     logger.info(f"Loading SDXL pipeline on {device}")
     
-    pipeline = StableDiffusionXLPipeline.from_pretrained(
-        model_name,
-        torch_dtype=torch_dtype,
-        use_safetensors=True,
-        device_map=device,
-    )
-    
-    # Enable memory optimizations
     if device == "cuda":
+        # Load pipeline and move to CUDA
+        pipeline = StableDiffusionXLPipeline.from_pretrained(
+            model_name,
+            torch_dtype=torch_dtype,
+            use_safetensors=True,
+        )
+        pipeline = pipeline.to(device)
+        
+        # Enable memory optimizations for CUDA
         pipeline.enable_model_cpu_offload()
         pipeline.enable_vae_slicing()
         pipeline.enable_attention_slicing()
+    else:
+        # For CPU, load normally and move to device
+        pipeline = StableDiffusionXLPipeline.from_pretrained(
+            model_name,
+            torch_dtype=torch_dtype,
+            use_safetensors=True,
+        )
+        pipeline = pipeline.to(device)
+    
+    # Load DoRA weights if provided
+    if dora_weights_path:
+        logger.info(f"Loading DoRA weights from {dora_weights_path}")
+        
+        # Check if DoRA weights exist
+        weights_path = Path(dora_weights_path)
+        if not weights_path.exists():
+            raise FileNotFoundError(f"DoRA weights path does not exist: {dora_weights_path}")
+        
+        # Check for required files
+        adapter_config = weights_path / "adapter_config.json"
+        if not adapter_config.exists():
+            raise FileNotFoundError(f"adapter_config.json not found in {dora_weights_path}")
+        
+        try:
+            # Load DoRA weights to UNet
+            pipeline.unet = PeftModel.from_pretrained(
+                pipeline.unet,
+                dora_weights_path,
+                torch_dtype=torch_dtype
+            )
+            logger.info("DoRA weights loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load DoRA weights: {e}")
+            raise
+    else:
+        logger.info("No DoRA weights specified, using base model only")
     
     return pipeline
 
@@ -73,7 +114,7 @@ def generate_images(
     prompt: str,
     prompt_id: int,
     output_dir: Path,
-    seeds: list[int] = [0, 1],
+    seeds: list[int] = None,
     width: int = 1024,
     height: int = 1024,
     num_inference_steps: int = 50,
@@ -108,6 +149,9 @@ def generate_images(
     list[dict[str, Any]]
         List of generated image metadata
     """
+    if seeds is None:
+        seeds = [0, 1]
+        
     results = []
     
     # Create prompt-specific directory
@@ -215,6 +259,12 @@ def main() -> None:
         default=1,
         help="Batch size (number of prompts to process in parallel)",
     )
+    parser.add_argument(
+        "--dora-weights",
+        type=str,
+        default=None,
+        help="Path to DoRA weights directory (optional)",
+    )
     
     args = parser.parse_args()
     
@@ -234,6 +284,7 @@ def main() -> None:
     pipeline = setup_pipeline(
         model_name=args.model,
         device=args.device,
+        dora_weights_path=args.dora_weights,
     )
     
     # Generate images

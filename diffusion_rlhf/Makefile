@@ -1,6 +1,6 @@
 # Makefile for Diffusion RLHF Pipeline
 
-.PHONY: all generate annotate build-pairs train-reward train-dspo sweep clean test
+.PHONY: all generate generate-dora annotate build-pairs train-reward train-dspo sweep clean test
 
 # Default target
 all: generate build-pairs train-reward train-dspo
@@ -8,6 +8,10 @@ all: generate build-pairs train-reward train-dspo
 # Generate images from prompts
 generate:
 	python scripts/generate_images.py --prompts data/prompts.csv --output data/images/
+
+# Generate images with DoRA weights (after training)
+generate-dora:
+	python scripts/generate_images.py --prompts data/prompts.csv --output data/images/ --dora-weights outputs/dspo_model/
 
 # Placeholder for manual annotation step
 annotate:
