@@ -207,7 +207,7 @@ class MultiHeadReward(nn.Module):
         img_neg : torch.Tensor
             Negative images [B, C, H, W]
         labels : torch.Tensor
-            Preference labels [B]
+            Preference labels [B] or [B, 5] for multi-head
             
         Returns
         -------
@@ -227,6 +227,71 @@ class MultiHeadReward(nn.Module):
         )
         
         return loss
+    
+    def compute_multihead_preference_loss(
+        self,
+        img_pos: torch.Tensor,
+        img_neg: torch.Tensor,
+        labels: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """
+        Compute multi-head preference loss for training.
+        
+        Parameters
+        ----------
+        img_pos : torch.Tensor
+            Positive images [B, C, H, W]
+        img_neg : torch.Tensor
+            Negative images [B, C, H, W]
+        labels : torch.Tensor
+            Multi-head preference labels [B, 5]
+            
+        Returns
+        -------
+        dict[str, torch.Tensor]
+            Dictionary with individual head losses and total loss
+        """
+        # Get individual head outputs
+        head_outputs_pos = self.forward(img_pos, return_individual=True)
+        head_outputs_neg = self.forward(img_neg, return_individual=True)
+        
+        # Compute loss for each head
+        losses = {}
+        total_loss = 0
+        head_names = ["spatial", "icono", "style", "fidelity", "material"]
+        
+        for i, head_name in enumerate(head_names):
+            # Get head-specific logits
+            logits = head_outputs_pos[head_name] - head_outputs_neg[head_name]
+            
+            # Get head-specific labels
+            head_labels = labels[:, i]
+            
+            # Skip neutral labels (0.5) in loss computation
+            valid_mask = head_labels != 0.5
+            if valid_mask.any():
+                head_loss = nn.functional.binary_cross_entropy_with_logits(
+                    logits[valid_mask].squeeze(), 
+                    head_labels[valid_mask]
+                )
+                losses[f"{head_name}_loss"] = head_loss
+                total_loss += head_loss
+        
+        # Compute combined loss using learnable weights
+        combined_reward_pos = self.forward(img_pos)
+        combined_reward_neg = self.forward(img_neg)
+        combined_logits = combined_reward_pos - combined_reward_neg
+        
+        # Use average of head labels for combined loss
+        combined_labels = labels.mean(dim=1)
+        combined_loss = nn.functional.binary_cross_entropy_with_logits(
+            combined_logits.squeeze(), combined_labels
+        )
+        
+        losses["combined_loss"] = combined_loss
+        losses["total_loss"] = total_loss + combined_loss
+        
+        return losses
     
     def save_pretrained(self, save_directory: str) -> None:
         """
