@@ -47,7 +47,7 @@ def setup_pipeline_on_gpu(
         low_cpu_mem_usage=False,  # Disable to avoid meta tensor issues
     )
     
-    # Move to specific GPU using to_empty() to avoid meta tensor issues
+    # Move to specific GPU directly
     pipeline = pipeline.to(device)
     
     # Load DoRA weights if provided
@@ -88,11 +88,12 @@ def setup_pipeline_on_gpu(
     pipeline.enable_vae_slicing()
     pipeline.enable_attention_slicing()
     
-    # Ensure all components are properly on the device
-    pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
-    pipeline.vae = pipeline.vae.to(device, dtype=torch.float16)
-    pipeline.text_encoder = pipeline.text_encoder.to(device, dtype=torch.float16)
-    pipeline.text_encoder_2 = pipeline.text_encoder_2.to(device, dtype=torch.float16)
+    # Ensure all components are properly on the device with correct dtype
+    for component_name in ['unet', 'vae', 'text_encoder', 'text_encoder_2']:
+        component = getattr(pipeline, component_name)
+        if component is not None:
+            # Move component to device with proper dtype
+            setattr(pipeline, component_name, component.to(device, dtype=torch.float16))
     
     # Final check - make sure pipeline is configured correctly
     logger.info(f"Pipeline setup complete on {device}")
