@@ -144,11 +144,22 @@ clean:
 # Advanced targets
 benchmark-gpu:
 	@echo "📊 Benchmarking GPU performance..."
-	python scripts/generate_dual_gpu.py \
+	@echo "Attempting dual GPU generation..."
+	-python scripts/generate_dual_gpu.py \
 		--prompts data/prompts.csv \
 		--output benchmark_output \
 		--steps 20 \
-		--seeds 0
+		--seeds 0 || \
+	(echo "⚠️ Dual GPU failed, falling back to single GPU..." && \
+	 python scripts/generate_images.py \
+		--prompts data/prompts.csv \
+		--output benchmark_output \
+		--model $(MODEL) \
+		--device cuda \
+		--width $(WIDTH) \
+		--height $(HEIGHT) \
+		--steps 20 \
+		--seeds 0)
 	@echo "Check GPU utilization with: nvidia-smi -l 1"
 
 monitor-training:

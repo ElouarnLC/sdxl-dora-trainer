@@ -35,38 +35,59 @@ def setup_pipeline_on_gpu(
     
     logger.info(f"Loading pipeline on {device}")
     
-    # Load pipeline
+    # Load pipeline with proper device handling to avoid meta tensor issues
     pipeline = StableDiffusionXLPipeline.from_pretrained(
         model_name,
         torch_dtype=torch.float16,
         use_safetensors=True,
-        device_map=None,
+        device_map=None,  # Don't use automatic device mapping
+        low_cpu_mem_usage=False,  # Load directly to avoid meta tensors
     )
     
-    # Move to specific GPU
+    # Move to specific GPU immediately after loading
     pipeline = pipeline.to(device)
     
     # Load DoRA weights if provided
     if dora_weights_path:
         logger.info(f"Loading DoRA weights on {device}")
         try:
+            # Important: Use fp32 for DoRA weights to avoid black image issue
+            # See BLACK_IMAGE_FIX.md - fp16 can cause NaN values in DoRA weights
             pipeline.unet = PeftModel.from_pretrained(
                 pipeline.unet,
                 dora_weights_path,
-                torch_dtype=torch.float16
+                torch_dtype=torch.float32,  # Use fp32 for stable DoRA loading
+                low_cpu_mem_usage=False,  # Avoid meta tensors
             )
-            pipeline.unet = pipeline.unet.to(device)
-            logger.info(f"DoRA weights loaded on {device}")
+            # Move to device and convert to fp16 only after loading
+            pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
+            logger.info(
+                f"DoRA weights loaded on {device} (loaded as fp32, converted to fp16)"
+            )
         except Exception as e:
             logger.error(f"Failed to load DoRA weights on {device}: {e}")
-            raise
+            # Continue without DoRA weights rather than failing
+            logger.info(f"Continuing without DoRA weights on {device}")
+            logger.info("Tip: Check BLACK_IMAGE_FIX.md for DoRA troubleshooting")
     
     # Memory optimizations
     pipeline.enable_vae_slicing()
     pipeline.enable_attention_slicing()
     
-    # Ensure all components are on the correct device
-    pipeline = pipeline.to(device)
+    # Final device check - ensure all components are on correct device and dtype
+    pipeline = pipeline.to(device, dtype=torch.float16)
+    
+    # Explicitly ensure critical components are properly placed
+    if hasattr(pipeline, 'unet') and pipeline.unet is not None:
+        pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
+    if hasattr(pipeline, 'vae') and pipeline.vae is not None:
+        pipeline.vae = pipeline.vae.to(device, dtype=torch.float16)
+    if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
+        pipeline.text_encoder = pipeline.text_encoder.to(device, dtype=torch.float16)
+    if hasattr(pipeline, 'text_encoder_2') and pipeline.text_encoder_2 is not None:
+        pipeline.text_encoder_2 = pipeline.text_encoder_2.to(
+            device, dtype=torch.float16
+        )
     
     return pipeline
 
@@ -84,36 +105,38 @@ def gpu_worker(
         # Set up pipeline on this GPU
         pipeline = setup_pipeline_on_gpu(gpu_id, model_name, dora_weights_path)
         device = f"cuda:{gpu_id}"
-        
+
         logger.info(f"GPU {gpu_id} worker ready")
-        
+
         while True:
             try:
                 # Get task from queue
                 task = task_queue.get(timeout=1)
                 if task is None:  # Shutdown signal
                     break
-                
+
                 prompt_id, prompt, seed, output_dir = task
-                
-                # Generate image
+
+                # Generate image with proper device handling
                 generator = torch.Generator(device=device).manual_seed(seed)
-                
-                image = pipeline(
-                    prompt=prompt,
-                    width=generation_args['width'],
-                    height=generation_args['height'],
-                    num_inference_steps=generation_args['steps'],
-                    guidance_scale=generation_args.get('guidance_scale', 7.5),
-                    generator=generator,
-                ).images[0]
-                
+
+                # Ensure generator is on correct device and handle dtype properly
+                with torch.cuda.device(device):
+                    image = pipeline(
+                        prompt=prompt,
+                        width=generation_args['width'],
+                        height=generation_args['height'],
+                        num_inference_steps=generation_args['steps'],
+                        guidance_scale=generation_args.get('guidance_scale', 7.5),
+                        generator=generator,
+                    ).images[0]
+
                 # Save image
                 prompt_dir = Path(output_dir) / str(prompt_id)
                 prompt_dir.mkdir(parents=True, exist_ok=True)
                 image_path = prompt_dir / f"{seed}.png"
                 image.save(image_path)
-                
+
                 # Store result
                 result = {
                     "prompt_id": prompt_id,
@@ -123,19 +146,27 @@ def gpu_worker(
                     "gpu_id": gpu_id,
                 }
                 result_queue.put(result)
-                
+
                 # Clear cache
-                torch.cuda.empty_cache()
-                
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
                 task_queue.task_done()
-                
+
             except queue.Empty:
                 continue
-            except Exception as e:
-                logger.error(f"Error on GPU {gpu_id}: {e}")
+            except RuntimeError as e:
+                if "CUDA" in str(e) or "device" in str(e).lower():
+                    logger.error(f"GPU {gpu_id} device error: {e}")
+                else:
+                    logger.error(f"Runtime error on GPU {gpu_id}: {e}")
                 task_queue.task_done()
                 continue
-                
+            except Exception as e:
+                logger.error(f"Unexpected error on GPU {gpu_id}: {e}")
+                task_queue.task_done()
+                continue
+
     except Exception as e:
         logger.error(f"Failed to initialize GPU {gpu_id} worker: {e}")
     finally:

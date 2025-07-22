@@ -93,17 +93,24 @@ def setup_pipeline(
             raise FileNotFoundError(f"adapter_config.json not found in {dora_weights_path}")
         
         try:
-            # Load DoRA weights to UNet
+            # Load DoRA weights to UNet with proper precision handling
+            # Important: Use fp32 for DoRA weights to avoid black image issue
+            # See BLACK_IMAGE_FIX.md - fp16 can cause NaN values in DoRA weights
             pipeline.unet = PeftModel.from_pretrained(
                 pipeline.unet,
                 dora_weights_path,
-                torch_dtype=torch_dtype
+                torch_dtype=torch.float32  # Use fp32 for stable DoRA loading
             )
-            # Ensure the adapted model is on the correct device
-            pipeline.unet = pipeline.unet.to(device)
-            logger.info("DoRA weights loaded successfully")
+            # Move to device and convert to fp16 only after loading (if using fp16)
+            if torch_dtype == torch.float16:
+                pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
+                logger.info("DoRA weights loaded (fp32→fp16 conversion)")
+            else:
+                pipeline.unet = pipeline.unet.to(device)
+                logger.info("DoRA weights loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load DoRA weights: {e}")
+            logger.error("Tip: Check BLACK_IMAGE_FIX.md for DoRA troubleshooting")
             raise
     else:
         logger.info("No DoRA weights specified, using base model only")
