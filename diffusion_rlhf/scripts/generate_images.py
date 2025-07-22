@@ -56,26 +56,26 @@ def setup_pipeline(
     
     logger.info(f"Loading SDXL pipeline on {device}")
     
+    # Load pipeline with device placement
+    pipeline = StableDiffusionXLPipeline.from_pretrained(
+        model_name,
+        torch_dtype=torch_dtype,
+        use_safetensors=True,
+        device_map=None,  # Don't use automatic device mapping
+    )
+    
     if device == "cuda":
-        # Load pipeline and move to CUDA
-        pipeline = StableDiffusionXLPipeline.from_pretrained(
-            model_name,
-            torch_dtype=torch_dtype,
-            use_safetensors=True,
-        )
+        # Move entire pipeline to CUDA first
         pipeline = pipeline.to(device)
         
-        # Enable memory optimizations for CUDA
-        pipeline.enable_model_cpu_offload()
+        # Enable memory optimizations for CUDA (but be careful with cpu_offload)
         pipeline.enable_vae_slicing()
         pipeline.enable_attention_slicing()
+        
+        # Only enable CPU offload if we have memory issues
+        # pipeline.enable_model_cpu_offload()  # Comment out for now
     else:
-        # For CPU, load normally and move to device
-        pipeline = StableDiffusionXLPipeline.from_pretrained(
-            model_name,
-            torch_dtype=torch_dtype,
-            use_safetensors=True,
-        )
+        # For CPU, move to device
         pipeline = pipeline.to(device)
     
     # Load DoRA weights if provided
@@ -99,12 +99,28 @@ def setup_pipeline(
                 dora_weights_path,
                 torch_dtype=torch_dtype
             )
+            # Ensure the adapted model is on the correct device
+            pipeline.unet = pipeline.unet.to(device)
             logger.info("DoRA weights loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load DoRA weights: {e}")
             raise
     else:
         logger.info("No DoRA weights specified, using base model only")
+    
+    # Final device check - ensure all components are on the same device
+    logger.info(f"Final device check - ensuring all components are on {device}")
+    pipeline = pipeline.to(device)
+    
+    # Double-check critical components
+    if hasattr(pipeline, 'unet') and pipeline.unet is not None:
+        pipeline.unet = pipeline.unet.to(device)
+    if hasattr(pipeline, 'vae') and pipeline.vae is not None:
+        pipeline.vae = pipeline.vae.to(device)
+    if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
+        pipeline.text_encoder = pipeline.text_encoder.to(device)
+    if hasattr(pipeline, 'text_encoder_2') and pipeline.text_encoder_2 is not None:
+        pipeline.text_encoder_2 = pipeline.text_encoder_2.to(device)
     
     return pipeline
 
@@ -159,19 +175,41 @@ def generate_images(
     prompt_dir.mkdir(parents=True, exist_ok=True)
     
     for seed in seeds:
-        generator = torch.Generator(device=pipeline.device).manual_seed(seed)
+        # Ensure generator is on the correct device
+        if hasattr(pipeline, 'device'):
+            device = pipeline.device
+        else:
+            device = pipeline.unet.device
+        generator = torch.Generator(device=device).manual_seed(seed)
         
         logger.info(f"Generating image for prompt {prompt_id}, seed {seed}")
         
         # Generate image
-        image = pipeline(
-            prompt=prompt,
-            width=width,
-            height=height,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-        ).images[0]
+        try:
+            image = pipeline(
+                prompt=prompt,
+                width=width,
+                height=height,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                generator=generator,
+            ).images[0]
+            
+            # Clear CUDA cache if using CUDA to prevent memory fragmentation
+            if torch.cuda.is_available() and 'cuda' in str(device):
+                torch.cuda.empty_cache()
+
+        except RuntimeError as e:
+            if "CUDA out of memory" in str(e) or "device" in str(e).lower():
+                logger.error(
+                    f"Device/memory error for prompt {prompt_id}, seed {seed}: {e}"
+                )
+                # Clear cache and retry once
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                raise
+            else:
+                raise
         
         # Save image
         image_path = prompt_dir / f"{seed}.png"
@@ -290,7 +328,11 @@ def main() -> None:
     # Generate images
     all_results = []
     
-    for _, row in tqdm(prompts_df.iterrows(), total=len(prompts_df), desc="Generating images"):
+    for _, row in tqdm(
+        prompts_df.iterrows(),
+        total=len(prompts_df),
+        desc="Generating images"
+    ):
         prompt_id = row["prompt_id"]
         prompt = row["prompt"]
         
