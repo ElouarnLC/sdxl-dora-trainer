@@ -35,30 +35,40 @@ def setup_pipeline_on_gpu(
     
     logger.info(f"Loading pipeline on {device}")
     
+    # Set current device to avoid meta tensor issues
+    torch.cuda.set_device(gpu_id)
+    
     # Load pipeline with proper device handling to avoid meta tensor issues
     pipeline = StableDiffusionXLPipeline.from_pretrained(
         model_name,
         torch_dtype=torch.float16,
         use_safetensors=True,
         device_map=None,  # Don't use automatic device mapping
-        low_cpu_mem_usage=False,  # Load directly to avoid meta tensors
+        low_cpu_mem_usage=False,  # Disable to avoid meta tensor issues
     )
     
-    # Move to specific GPU immediately after loading
+    # Move to specific GPU using to_empty() to avoid meta tensor issues
     pipeline = pipeline.to(device)
     
     # Load DoRA weights if provided
-    if dora_weights_path:
-        logger.info(f"Loading DoRA weights on {device}")
+    if dora_weights_path and Path(dora_weights_path).exists():
+        logger.info(f"Loading DoRA weights from {dora_weights_path} on {device}")
         try:
             # Important: Use fp32 for DoRA weights to avoid black image issue
             # See BLACK_IMAGE_FIX.md - fp16 can cause NaN values in DoRA weights
+            
+            # First ensure the base UNet is properly on device
+            pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
+            
+            # Load DoRA weights using to_empty() method to avoid meta tensor issues
             pipeline.unet = PeftModel.from_pretrained(
                 pipeline.unet,
                 dora_weights_path,
                 torch_dtype=torch.float32,  # Use fp32 for stable DoRA loading
-                low_cpu_mem_usage=False,  # Avoid meta tensors
+                low_cpu_mem_usage=False,  # Disable to avoid meta tensor issues
+                device_map=None,
             )
+            
             # Move to device and convert to fp16 only after loading
             pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
             logger.info(
@@ -69,25 +79,23 @@ def setup_pipeline_on_gpu(
             # Continue without DoRA weights rather than failing
             logger.info(f"Continuing without DoRA weights on {device}")
             logger.info("Tip: Check BLACK_IMAGE_FIX.md for DoRA troubleshooting")
+    elif dora_weights_path:
+        logger.warning(
+            f"DoRA weights path {dora_weights_path} does not exist, skipping"
+        )
     
     # Memory optimizations
     pipeline.enable_vae_slicing()
     pipeline.enable_attention_slicing()
     
-    # Final device check - ensure all components are on correct device and dtype
-    pipeline = pipeline.to(device, dtype=torch.float16)
+    # Ensure all components are properly on the device
+    pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
+    pipeline.vae = pipeline.vae.to(device, dtype=torch.float16)
+    pipeline.text_encoder = pipeline.text_encoder.to(device, dtype=torch.float16)
+    pipeline.text_encoder_2 = pipeline.text_encoder_2.to(device, dtype=torch.float16)
     
-    # Explicitly ensure critical components are properly placed
-    if hasattr(pipeline, 'unet') and pipeline.unet is not None:
-        pipeline.unet = pipeline.unet.to(device, dtype=torch.float16)
-    if hasattr(pipeline, 'vae') and pipeline.vae is not None:
-        pipeline.vae = pipeline.vae.to(device, dtype=torch.float16)
-    if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
-        pipeline.text_encoder = pipeline.text_encoder.to(device, dtype=torch.float16)
-    if hasattr(pipeline, 'text_encoder_2') and pipeline.text_encoder_2 is not None:
-        pipeline.text_encoder_2 = pipeline.text_encoder_2.to(
-            device, dtype=torch.float16
-        )
+    # Final check - make sure pipeline is configured correctly
+    logger.info(f"Pipeline setup complete on {device}")
     
     return pipeline
 
