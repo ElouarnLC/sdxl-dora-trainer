@@ -189,6 +189,11 @@ diffusion_rlhf/data/images/
 outputs/
 diffusion_rlhf/outputs/
 
+# Generated data files and annotations
+diffusion_rlhf/data/generated*.csv
+diffusion_rlhf/data/prompts*.csv
+diffusion_rlhf/data/annotations/
+
 # PyPI configuration file
 .pypirc
 

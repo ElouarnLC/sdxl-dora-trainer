@@ -270,9 +270,13 @@ class MultiHeadReward(nn.Module):
             # Skip neutral labels (0.5) in loss computation
             valid_mask = head_labels != 0.5
             if valid_mask.any():
+                # Ensure consistent dimensions
+                logits_valid = logits[valid_mask].view(-1)
+                labels_valid = head_labels[valid_mask].view(-1)
+                
                 head_loss = nn.functional.binary_cross_entropy_with_logits(
-                    logits[valid_mask].squeeze(), 
-                    head_labels[valid_mask]
+                    logits_valid, 
+                    labels_valid
                 )
                 losses[f"{head_name}_loss"] = head_loss
                 total_loss += head_loss
@@ -285,7 +289,7 @@ class MultiHeadReward(nn.Module):
         # Use average of head labels for combined loss
         combined_labels = labels.mean(dim=1)
         combined_loss = nn.functional.binary_cross_entropy_with_logits(
-            combined_logits.squeeze(), combined_labels
+            combined_logits.view(-1), combined_labels.view(-1)
         )
         
         losses["combined_loss"] = combined_loss

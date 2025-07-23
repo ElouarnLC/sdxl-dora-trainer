@@ -174,7 +174,7 @@ class MultiHeadPairPreferenceDataset(Dataset):
         try:
             # Handle relative paths
             if not Path(image_path).is_absolute():
-                image_path = self.ratings_file.parent / image_path
+                image_path = self.ratings_file.parent.parent / image_path
             
             image = Image.open(image_path).convert("RGB")
             return self.transform(image)
