@@ -662,12 +662,15 @@ def train_multihead_reward_model(
             for key, value in metrics.items():
                 logger.info(f"  {key}: {value:.4f}")
         
-        # Save best model based on combined F1
-        current_f1 = val_metrics.get("val_combined_f1", 0.0)
+        # Save best model based on average F1 score across heads
+        head_f1_scores = [v for k, v in val_metrics.items() if k.endswith("_f1")]
+        current_f1 = (
+            sum(head_f1_scores) / len(head_f1_scores) if head_f1_scores else 0.0
+        )
         if current_f1 > best_f1:
             best_f1 = current_f1
             if accelerator.is_main_process:
-                logger.info(f"New best F1: {best_f1:.4f}, saving model")
+                logger.info(f"New best average F1: {best_f1:.4f}, saving model")
                 accelerator.unwrap_model(model).save_pretrained(output_path / "best")
         
         # Save checkpoint

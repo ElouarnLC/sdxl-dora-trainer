@@ -315,10 +315,12 @@ class MultiHeadReward(nn.Module):
         save_path.mkdir(parents=True, exist_ok=True)
         
         # Save only the trainable parts (heads and weights)
-        state_dict = {
-            "heads": self.heads.state_dict(),
-            "head_weights": self.head_weights,
-        }
+        # Flatten the heads state dict to avoid nested structure
+        state_dict = {}
+        heads_state_dict = self.heads.state_dict()
+        for key, value in heads_state_dict.items():
+            state_dict[f"heads.{key}"] = value
+        state_dict["head_weights"] = self.head_weights
         
         save_file(state_dict, save_path / "reward_model.safetensors")
         
@@ -359,7 +361,15 @@ class MultiHeadReward(nn.Module):
         
         # Load weights
         state_dict = load_file(model_path / "reward_model.safetensors")
-        model.heads.load_state_dict(state_dict["heads"])
+        
+        # Reconstruct heads state dict from flattened format
+        heads_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith("heads."):
+                heads_key = key[6:]  # Remove "heads." prefix
+                heads_state_dict[heads_key] = value
+        
+        model.heads.load_state_dict(heads_state_dict)
         model.head_weights.data = state_dict["head_weights"]
         
         logger.info(f"Loaded reward model from {model_path}")
@@ -377,4 +387,7 @@ class MultiHeadReward(nn.Module):
         weights = torch.softmax(self.head_weights, dim=0)
         head_names = list(self.heads.keys())
         
-        return {name: weight.item() for name, weight in zip(head_names, weights)}
+        return {
+            name: weight.item()
+            for name, weight in zip(head_names, weights, strict=True)
+        }
