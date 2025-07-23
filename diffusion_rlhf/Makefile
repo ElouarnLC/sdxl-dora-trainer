@@ -80,7 +80,7 @@ annotate:
 	@echo "  - Fidelity: Technical quality, sharpness, noise, artifacts"
 	@echo "  - Material: Texture realism, surface properties, lighting"
 	python scripts/build_pairs.py \
-		--images-csv $(OUTPUT_DIR)/../generated_dual_gpu.csv \
+		--images-csv data/generated.csv \
 		--output data/annotations/multihead_ratings.csv \
 		--format multihead
 	@echo "✅ Multi-head annotation template created!"

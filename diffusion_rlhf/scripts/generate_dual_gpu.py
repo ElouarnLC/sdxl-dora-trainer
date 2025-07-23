@@ -287,7 +287,7 @@ def main():
     
     # Save metadata
     results_df = pd.DataFrame(all_results)
-    results_file = output_dir.parent / "generated_dual_gpu.csv"
+    results_file = output_dir.parent / "generated.csv"
     results_df.to_csv(results_file, index=False)
     
     logger.info(f"Generated {len(all_results)} images using {len(gpu_ids)} GPUs")

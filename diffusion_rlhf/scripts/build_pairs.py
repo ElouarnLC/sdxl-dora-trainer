@@ -171,16 +171,102 @@ def analyze_pairs(pairs: list[dict]) -> None:
     logger.info(f"Label distribution - positive: {positive_pairs}, negative: {negative_pairs}")
 
 
-def main() -> None:
-    """Main function for building preference pairs."""
-    parser = argparse.ArgumentParser(
-        description="Build preference pairs from ratings"
+def find_generated_csv() -> str:
+    """
+    Automatically find the generated CSV file from either single or dual GPU generation.
+    
+    Returns
+    -------
+    str
+        Path to the generated CSV file
+        
+    Raises
+    ------
+    FileNotFoundError
+        If no generated CSV file is found
+    """
+    possible_files = [
+        "data/generated_dual_gpu.csv",  # From dual GPU generation
+        "data/generated.csv",           # From single GPU generation
+    ]
+    
+    for file_path in possible_files:
+        if Path(file_path).exists():
+            logger.info(f"Found generated images CSV: {file_path}")
+            return file_path
+    
+    raise FileNotFoundError(
+        "No generated CSV file found. Expected one of: " +
+        ", ".join(possible_files) +
+        ". Please run 'make generate-images-dual' or " +
+        "'make generate-images-single' first."
     )
+
+
+def create_multihead_template(images_csv: str, output_file: Path) -> None:
+    """
+    Create a multi-head rating template from generated images CSV.
+    
+    Parameters
+    ----------
+    images_csv : str
+        Path to generated images CSV file
+    output_file : Path
+        Output path for multihead ratings template
+    """
+    # Load generated images data
+    images_df = pd.read_csv(images_csv)
+    
+    # Handle different column names for image path
+    image_path_col = "image_path" if "image_path" in images_df.columns else "path"
+    
+    # Create template with multi-head rating columns
+    template_rows = []
+    for _, row in images_df.iterrows():
+        template_rows.append({
+            "prompt_id": row["prompt_id"],
+            "image_path": row[image_path_col],
+            "spatial_rating": "",  # Composition, layout, rule of thirds, balance
+            "icono_rating": "",    # Symbols, cultural elements, narrative
+            "style_rating": "",    # Artistic technique, color harmony
+            "fidelity_rating": "", # Technical quality, sharpness, noise
+            "material_rating": "", # Texture realism, surface properties
+        })
+    
+    # Save template
+    template_df = pd.DataFrame(template_rows)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    template_df.to_csv(output_file, index=False)
+    
+    logger.info(f"Created multi-head rating template with {len(template_rows)} images")
+    logger.info(f"Template saved to: {output_file}")
+    logger.info("Fill in ratings (0-10 scale) for each aspect before training")
+
+
+def main() -> None:
+    """Main function for building preference pairs or creating annotation templates."""
+    parser = argparse.ArgumentParser(
+        description="Build preference pairs from ratings or create annotation templates"
+    )
+    
     parser.add_argument(
         "--ratings",
         type=str,
-        required=True,
-        help="Path to ratings.csv file",
+        help="Path to ratings.csv file (for building pairs from existing ratings)",
+    )
+    parser.add_argument(
+        "--images-csv",
+        type=str,
+        help="Path to generated images CSV file (for creating annotation template)",
+    )
+    
+    parser.add_argument(
+        "--format",
+        type=str,
+        choices=["pairs", "multihead"],
+        default="pairs",
+        help="Output format: 'pairs' for preference pairs, "
+             "'multihead' for rating template",
     )
     parser.add_argument(
         "--prompts",
@@ -198,7 +284,7 @@ def main() -> None:
         "--output",
         type=str,
         required=True,
-        help="Output path for pairs.jsonl file",
+        help="Output path for pairs.jsonl file or rating template",
     )
     parser.add_argument(
         "--threshold",
@@ -209,11 +295,27 @@ def main() -> None:
     
     args = parser.parse_args()
     
+    output_file = Path(args.output)
+    
+    # Handle multihead annotation template creation
+    if args.images_csv and args.format == "multihead":
+        images_csv_file = Path(args.images_csv)
+        if not images_csv_file.exists():
+            raise FileNotFoundError(f"Images CSV file not found: {images_csv_file}")
+        
+        logger.info(f"Creating multi-head annotation template from {images_csv_file}")
+        create_multihead_template(str(images_csv_file), output_file)
+        logger.info("Multi-head annotation template created successfully")
+        return
+    
+    # Handle existing ratings workflow (original functionality)
+    if not args.ratings:
+        raise ValueError("--ratings is required for building preference pairs")
+    
     # Validate input files
     ratings_file = Path(args.ratings)
     prompts_file = Path(args.prompts)
     images_dir = Path(args.images)
-    output_file = Path(args.output)
     
     if not ratings_file.exists():
         raise FileNotFoundError(f"Ratings file not found: {ratings_file}")
