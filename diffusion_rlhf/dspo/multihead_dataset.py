@@ -174,7 +174,9 @@ class MultiHeadPairPreferenceDataset(Dataset):
         try:
             # Handle relative paths
             if not Path(image_path).is_absolute():
-                image_path = self.ratings_file.parent.parent / image_path
+                # Image paths in CSV are like "data/images/0/1.png"
+                # When script runs from diffusion_rlhf/, we just use the path as-is
+                image_path = Path(image_path)
             
             image = Image.open(image_path).convert("RGB")
             return self.transform(image)

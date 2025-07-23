@@ -270,9 +270,14 @@ class MultiHeadReward(nn.Module):
             # Skip neutral labels (0.5) in loss computation
             valid_mask = head_labels != 0.5
             if valid_mask.any():
-                # Ensure consistent dimensions
-                logits_valid = logits[valid_mask].view(-1)
-                labels_valid = head_labels[valid_mask].view(-1)
+                # Ensure consistent dimensions - flatten and ensure at least 1D
+                logits_valid = logits[valid_mask].flatten()
+                labels_valid = head_labels[valid_mask].flatten()
+                
+                # Ensure both have the same shape
+                if logits_valid.shape != labels_valid.shape:
+                    logger.warning(f"Shape mismatch for {head_name}: logits {logits_valid.shape}, labels {labels_valid.shape}")
+                    continue
                 
                 head_loss = nn.functional.binary_cross_entropy_with_logits(
                     logits_valid, 
