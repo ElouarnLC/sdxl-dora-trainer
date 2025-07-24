@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-Train multi-head reward model for image preference learning.
+Train multimodal multi-head reward model for image preference learning.
 
-Trains a reward model with frozen OpenCLIP backbone and 5 specialized MLP heads
-for spatial, iconographic, style, fidelity, and material aspects.
+Trains a reward model with frozen OpenCLIP backbone that processes both 
+images and text prompts, with 5 specialized MLP heads for spatial, 
+iconographic, style, fidelity, and material aspects.
+
+This version enhances prompt-image alignment assessment, which is critical
+for prompt-conditioned generation tasks.
 """
 
 import argparse
@@ -23,9 +27,11 @@ from tqdm import tqdm
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from dspo.datasets import PairPreferenceDataset
-from dspo.multihead_dataset import MultiHeadPairPreferenceDataset
-from dspo.reward import MultiHeadReward
+from dspo.multimodal_datasets import (
+    MultimodalPairPreferenceDataset,
+    MultimodalMultiHeadPairPreferenceDataset,
+)
+from dspo.multimodal_reward import MultimodalMultiHeadReward
 
 # Configure logging
 logging.basicConfig(
@@ -57,19 +63,22 @@ def setup_accelerator(mixed_precision: str = "no") -> Accelerator:
     )
 
 
-def create_dataloaders(
+def create_multimodal_dataloaders(
     pairs_file: str,
+    prompts_file: str,
     batch_size: int = 8,
     val_split: float = 0.2,
     num_workers: int = 4,
 ) -> tuple[DataLoader, DataLoader]:
     """
-    Create training and validation dataloaders.
+    Create training and validation dataloaders for multimodal training.
     
     Parameters
     ----------
     pairs_file : str
         Path to pairs.jsonl file
+    prompts_file : str
+        Path to prompts.csv file
     batch_size : int
         Batch size
     val_split : float
@@ -83,14 +92,16 @@ def create_dataloaders(
         Training and validation dataloaders
     """
     # Create datasets
-    train_dataset = PairPreferenceDataset(
+    train_dataset = MultimodalPairPreferenceDataset(
         pairs_file=pairs_file,
+        prompts_file=prompts_file,
         split="train",
         val_split=val_split,
     )
     
-    val_dataset = PairPreferenceDataset(
+    val_dataset = MultimodalPairPreferenceDataset(
         pairs_file=pairs_file,
+        prompts_file=prompts_file,
         split="val",
         val_split=val_split,
     )
@@ -118,20 +129,23 @@ def create_dataloaders(
     return train_loader, val_loader
 
 
-def create_multihead_dataloaders(
+def create_multimodal_multihead_dataloaders(
     ratings_file: str,
+    prompts_file: str,
     batch_size: int = 8,
     val_split: float = 0.2,
     num_workers: int = 4,
     min_rating_diff: float = 0.5,
 ) -> tuple[DataLoader, DataLoader]:
     """
-    Create training and validation dataloaders for multi-head training.
+    Create training and validation dataloaders for multimodal multi-head training.
     
     Parameters
     ----------
     ratings_file : str
         Path to ratings.csv file with multi-head ratings
+    prompts_file : str
+        Path to prompts.csv file
     batch_size : int
         Batch size
     val_split : float
@@ -147,15 +161,17 @@ def create_multihead_dataloaders(
         Training and validation dataloaders
     """
     # Create datasets
-    train_dataset = MultiHeadPairPreferenceDataset(
+    train_dataset = MultimodalMultiHeadPairPreferenceDataset(
         ratings_file=ratings_file,
+        prompts_file=prompts_file,
         split="train",
         val_split=val_split,
         min_rating_diff=min_rating_diff,
     )
     
-    val_dataset = MultiHeadPairPreferenceDataset(
+    val_dataset = MultimodalMultiHeadPairPreferenceDataset(
         ratings_file=ratings_file,
+        prompts_file=prompts_file,
         split="val",
         val_split=val_split,
         min_rating_diff=min_rating_diff,
@@ -184,26 +200,27 @@ def create_multihead_dataloaders(
     # Log dataset statistics
     stats = train_dataset.get_dataset_stats()
     logger.info("Dataset statistics:")
+    logger.info(f"  Unique prompts: {stats.get('unique_prompts', 0)}")
     for head, counts in stats.get("head_preferences", {}).items():
         logger.info(f"  {head}: {counts}")
     
     return train_loader, val_loader
 
 
-def train_epoch(
-    model: MultiHeadReward,
+def train_multimodal_epoch(
+    model: MultimodalMultiHeadReward,
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     accelerator: Accelerator,
     epoch: int,
 ) -> dict[str, float]:
     """
-    Train for one epoch.
+    Train for one epoch with multimodal inputs.
     
     Parameters
     ----------
-    model : MultiHeadReward
-        Reward model
+    model : MultimodalMultiHeadReward
+        Multimodal reward model
     train_loader : DataLoader
         Training dataloader
     optimizer : torch.optim.Optimizer
@@ -229,10 +246,11 @@ def train_epoch(
     )
     
     for batch in progress_bar:
-        # Forward pass
+        # Forward pass with multimodal inputs
         loss = model.compute_preference_loss(
             img_pos=batch["img_pos"],
             img_neg=batch["img_neg"],
+            prompts=batch["prompt"],  # List of strings
             labels=batch["label"],
         )
         
@@ -252,25 +270,20 @@ def train_epoch(
     return {"train_loss": avg_loss}
 
 
-def train_multihead_epoch(
-    model: MultiHeadReward,
+def train_multimodal_multihead_epoch(
+    model: MultimodalMultiHeadReward,
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     accelerator: Accelerator,
     epoch: int,
 ) -> dict[str, float]:
     """
-    Train for one epoch with multi-head loss.
-    
-    NOTE: For enhanced prompt-image alignment assessment, consider using the
-    multimodal version in train_multimodal_reward.py which processes both
-    images and text prompts. This is particularly beneficial for SDXL training
-    with specific prompts.
+    Train for one epoch with multimodal multi-head loss.
     
     Parameters
     ----------
-    model : MultiHeadReward
-        Reward model
+    model : MultimodalMultiHeadReward
+        Multimodal reward model
     train_loader : DataLoader
         Training dataloader
     optimizer : torch.optim.Optimizer
@@ -296,10 +309,11 @@ def train_multihead_epoch(
     )
     
     for batch in progress_bar:
-        # Forward pass with multi-head loss
+        # Forward pass with multimodal multi-head loss
         losses = model.compute_multihead_preference_loss(
             img_pos=batch["img_pos"],
             img_neg=batch["img_neg"],
+            prompts=batch["prompt"],  # List of strings
             labels=batch["labels"],
         )
         
@@ -328,18 +342,18 @@ def train_multihead_epoch(
     return {f"train_{key}": value for key, value in avg_losses.items()}
 
 
-def validate_epoch(
-    model: MultiHeadReward,
+def validate_multimodal_epoch(
+    model: MultimodalMultiHeadReward,
     val_loader: DataLoader,
     accelerator: Accelerator,
 ) -> dict[str, float]:
     """
-    Validate for one epoch.
+    Validate for one epoch with multimodal inputs.
     
     Parameters
     ----------
-    model : MultiHeadReward
-        Reward model
+    model : MultimodalMultiHeadReward
+        Multimodal reward model
     val_loader : DataLoader
         Validation dataloader
     accelerator : Accelerator
@@ -361,16 +375,17 @@ def validate_epoch(
             desc="Validation",
             disable=not accelerator.is_local_main_process,
         ):
-            # Forward pass
+            # Forward pass with multimodal inputs
             loss = model.compute_preference_loss(
                 img_pos=batch["img_pos"],
                 img_neg=batch["img_neg"],
+                prompts=batch["prompt"],
                 labels=batch["label"],
             )
             
             # Get predictions for metrics
-            reward_pos = model(batch["img_pos"])
-            reward_neg = model(batch["img_neg"])
+            reward_pos = model(batch["img_pos"], batch["prompt"])
+            reward_neg = model(batch["img_neg"], batch["prompt"])
             
             # Convert to binary predictions
             logits = reward_pos - reward_neg
@@ -392,12 +407,12 @@ def validate_epoch(
     }
 
 
-def validate_multihead_epoch(
-    model: MultiHeadReward,
+def validate_multimodal_multihead_epoch(
+    model: MultimodalMultiHeadReward,
     val_loader: DataLoader,
     accelerator: Accelerator,
 ) -> dict[str, float]:
-    """Validate for one epoch with multi-head metrics."""
+    """Validate for one epoch with multimodal multi-head metrics."""
     model.eval()
     total_losses = {}
     head_predictions = {head: [] for head in ["spatial", "icono", "style", "fidelity", "material"]}
@@ -405,16 +420,17 @@ def validate_multihead_epoch(
     
     with torch.no_grad():
         for batch in tqdm(val_loader, desc="Validation", disable=not accelerator.is_local_main_process):
-            # Forward pass with multi-head loss
+            # Forward pass with multimodal multi-head loss
             losses = model.compute_multihead_preference_loss(
                 img_pos=batch["img_pos"],
                 img_neg=batch["img_neg"],
+                prompts=batch["prompt"],
                 labels=batch["labels"],
             )
             
             # Get individual head predictions
-            head_outputs_pos = model(batch["img_pos"], return_individual=True)
-            head_outputs_neg = model(batch["img_neg"], return_individual=True)
+            head_outputs_pos = model(batch["img_pos"], batch["prompt"], return_individual=True)
+            head_outputs_neg = model(batch["img_neg"], batch["prompt"], return_individual=True)
             
             # Process each head
             head_names = ["spatial", "icono", "style", "fidelity", "material"]
@@ -452,8 +468,9 @@ def validate_multihead_epoch(
     return {**avg_losses, **head_metrics}
 
 
-def train_reward_model(
+def train_multimodal_reward_model(
     pairs_file: str,
+    prompts_file: str,
     output_dir: str,
     num_epochs: int = 10,
     batch_size: int = 8,
@@ -462,14 +479,17 @@ def train_reward_model(
     val_split: float = 0.2,
     mixed_precision: str = "no",
     save_every: int = 2,
+    fusion_method: str = "concat",
 ) -> None:
     """
-    Train the reward model.
+    Train the multimodal reward model.
     
     Parameters
     ----------
     pairs_file : str
         Path to pairs.jsonl file
+    prompts_file : str
+        Path to prompts.csv file
     output_dir : str
         Output directory for model checkpoints
     num_epochs : int, default=10
@@ -486,6 +506,8 @@ def train_reward_model(
         Mixed precision mode
     save_every : int, default=2
         Save checkpoint every N epochs
+    fusion_method : str, default="concat"
+        Method to fuse image and text features
     """
     # Set up paths
     output_path = Path(output_dir)
@@ -495,14 +517,15 @@ def train_reward_model(
     accelerator = setup_accelerator(mixed_precision)
     
     # Create dataloaders
-    train_loader, val_loader = create_dataloaders(
+    train_loader, val_loader = create_multimodal_dataloaders(
         pairs_file=pairs_file,
+        prompts_file=prompts_file,
         batch_size=batch_size,
         val_split=val_split,
     )
     
     # Initialize model
-    model = MultiHeadReward()
+    model = MultimodalMultiHeadReward(fusion_method=fusion_method)
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -516,14 +539,15 @@ def train_reward_model(
         model, optimizer, train_loader, val_loader
     )
     
-    logger.info(f"Starting reward model training for {num_epochs} epochs")
+    logger.info(f"Starting multimodal reward model training for {num_epochs} epochs")
     logger.info(f"Batch size: {batch_size}, Learning rate: {learning_rate}")
+    logger.info(f"Fusion method: {fusion_method}")
     
     best_f1 = 0.0
     
     for epoch in range(1, num_epochs + 1):
         # Training
-        train_metrics = train_epoch(
+        train_metrics = train_multimodal_epoch(
             model=model,
             train_loader=train_loader,
             optimizer=optimizer,
@@ -532,7 +556,7 @@ def train_reward_model(
         )
         
         # Validation
-        val_metrics = validate_epoch(
+        val_metrics = validate_multimodal_epoch(
             model=model,
             val_loader=val_loader,
             accelerator=accelerator,
@@ -567,8 +591,9 @@ def train_reward_model(
         logger.info(f"Models saved to {output_path}")
 
 
-def train_multihead_reward_model(
+def train_multimodal_multihead_reward_model(
     ratings_file: str,
+    prompts_file: str,
     output_dir: str,
     num_epochs: int = 10,
     batch_size: int = 8,
@@ -578,14 +603,17 @@ def train_multihead_reward_model(
     mixed_precision: str = "no",
     save_every: int = 2,
     min_rating_diff: float = 0.5,
+    fusion_method: str = "concat",
 ) -> None:
     """
-    Train the multi-head reward model with individual head ratings.
+    Train the multimodal multi-head reward model with individual head ratings.
     
     Parameters
     ----------
     ratings_file : str
         Path to ratings.csv file with multi-head ratings
+    prompts_file : str
+        Path to prompts.csv file
     output_dir : str
         Output directory for model checkpoints
     num_epochs : int, default=10
@@ -604,6 +632,8 @@ def train_multihead_reward_model(
         Save checkpoint every N epochs
     min_rating_diff : float, default=0.5
         Minimum rating difference to create preference pair
+    fusion_method : str, default="concat"
+        Method to fuse image and text features
     """
     # Set up paths
     output_path = Path(output_dir)
@@ -613,15 +643,16 @@ def train_multihead_reward_model(
     accelerator = setup_accelerator(mixed_precision)
     
     # Create dataloaders
-    train_loader, val_loader = create_multihead_dataloaders(
+    train_loader, val_loader = create_multimodal_multihead_dataloaders(
         ratings_file=ratings_file,
+        prompts_file=prompts_file,
         batch_size=batch_size,
         val_split=val_split,
         min_rating_diff=min_rating_diff,
     )
     
     # Initialize model
-    model = MultiHeadReward()
+    model = MultimodalMultiHeadReward(fusion_method=fusion_method)
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -635,15 +666,16 @@ def train_multihead_reward_model(
         model, optimizer, train_loader, val_loader
     )
     
-    logger.info(f"Starting multi-head reward model training for {num_epochs} epochs")
+    logger.info(f"Starting multimodal multi-head reward model training for {num_epochs} epochs")
     logger.info(f"Batch size: {batch_size}, Learning rate: {learning_rate}")
     logger.info(f"Min rating difference: {min_rating_diff}")
+    logger.info(f"Fusion method: {fusion_method}")
     
     best_f1 = 0.0
     
     for epoch in range(1, num_epochs + 1):
         # Training
-        train_metrics = train_multihead_epoch(
+        train_metrics = train_multimodal_multihead_epoch(
             model=model,
             train_loader=train_loader,
             optimizer=optimizer,
@@ -652,7 +684,7 @@ def train_multihead_reward_model(
         )
         
         # Validation
-        val_metrics = validate_multihead_epoch(
+        val_metrics = validate_multimodal_multihead_epoch(
             model=model,
             val_loader=val_loader,
             accelerator=accelerator,
@@ -700,7 +732,7 @@ def train_multihead_reward_model(
 def main() -> None:
     """Main training function."""
     parser = argparse.ArgumentParser(
-        description="Train multi-head reward model"
+        description="Train multimodal multi-head reward model"
     )
     parser.add_argument(
         "--mode",
@@ -720,9 +752,15 @@ def main() -> None:
         help="Path to ratings.csv file (required for multihead mode)",
     )
     parser.add_argument(
+        "--prompts",
+        type=str,
+        required=True,
+        help="Path to prompts.csv file (required for both modes)",
+    )
+    parser.add_argument(
         "--output",
         type=str,
-        default="outputs/reward_model",
+        default="outputs/multimodal_reward_model",
         help="Output directory for model checkpoints",
     )
     parser.add_argument(
@@ -774,8 +812,20 @@ def main() -> None:
         default=0.5,
         help="Minimum rating difference for multihead mode",
     )
+    parser.add_argument(
+        "--fusion-method",
+        type=str,
+        default="concat",
+        choices=["concat", "add", "cross_attention"],
+        help="Method to fuse image and text features",
+    )
     
     args = parser.parse_args()
+    
+    # Validate prompts file
+    prompts_file = Path(args.prompts)
+    if not prompts_file.exists():
+        raise FileNotFoundError(f"Prompts file not found: {prompts_file}")
     
     # Validate inputs based on mode
     if args.mode == "pairs":
@@ -786,8 +836,9 @@ def main() -> None:
             raise FileNotFoundError(f"Pairs file not found: {pairs_file}")
         
         # Train with pairs
-        train_reward_model(
+        train_multimodal_reward_model(
             pairs_file=str(pairs_file),
+            prompts_file=str(prompts_file),
             output_dir=args.output,
             num_epochs=args.epochs,
             batch_size=args.batch_size,
@@ -796,6 +847,7 @@ def main() -> None:
             val_split=args.val_split,
             mixed_precision=args.mixed_precision,
             save_every=args.save_every,
+            fusion_method=args.fusion_method,
         )
     
     elif args.mode == "multihead":
@@ -806,8 +858,9 @@ def main() -> None:
             raise FileNotFoundError(f"Ratings file not found: {ratings_file}")
         
         # Train with multi-head ratings
-        train_multihead_reward_model(
+        train_multimodal_multihead_reward_model(
             ratings_file=str(ratings_file),
+            prompts_file=str(prompts_file),
             output_dir=args.output,
             num_epochs=args.epochs,
             batch_size=args.batch_size,
@@ -817,6 +870,7 @@ def main() -> None:
             mixed_precision=args.mixed_precision,
             save_every=args.save_every,
             min_rating_diff=args.min_rating_diff,
+            fusion_method=args.fusion_method,
         )
 
 

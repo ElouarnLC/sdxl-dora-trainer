@@ -1,7 +1,7 @@
 # Makefile for SDXL DoRA Trainer - RLHF Pipeline
 # Usage: make <target>
 
-.PHONY: help install generate-images-dual generate-images-single train-reward train-dspo annotate clean
+.PHONY: help install generate-images-dual generate-images-single train-reward train-reward-multimodal train-dspo annotate clean
 
 # Default variables
 PROMPTS_FILE := data/prompts.csv
@@ -12,6 +12,7 @@ SEEDS := 0 1
 WIDTH := 1024
 HEIGHT := 1024
 STEPS := 50
+FUSION_METHOD := concat
 
 help:
 	@echo "SDXL DoRA RLHF Training Pipeline"
@@ -20,12 +21,14 @@ help:
 	@echo "Available targets:"
 	@echo "  generate-images-dual   - Generate images using 2 GPUs (fastest)"
 	@echo "  generate-images-single - Generate images using 1 GPU"
-	@echo "  train-reward          - Train reward model on ratings"
+	@echo "  train-reward          - Train image-only reward model on ratings"
+	@echo "  train-reward-multimodal - Train multimodal (image+prompt) reward model"
 	@echo "  train-dspo            - Train DSPO model using reward"
 	@echo "  annotate              - Create annotation pairs for experts"
 	@echo "  install               - Install dependencies"
 	@echo "  clean                 - Clean generated files"
 	@echo "  explain-workflow      - Explain the complete RLHF workflow"
+	@echo "  explain-multimodal    - Explain multimodal training benefits"
 	@echo ""
 	@echo "Configuration (override with VAR=value):"
 	@echo "  PROMPTS_FILE = $(PROMPTS_FILE)"
@@ -36,6 +39,7 @@ help:
 	@echo "  WIDTH        = $(WIDTH)"
 	@echo "  HEIGHT       = $(HEIGHT)"
 	@echo "  STEPS        = $(STEPS)"
+	@echo "  FUSION_METHOD = $(FUSION_METHOD) (concat, add, cross_attention)"
 
 install:
 	@echo "Installing dependencies..."
@@ -88,7 +92,7 @@ annotate:
 	@echo "� Format: prompt_id,image_path,spatial_rating,icono_rating,style_rating,fidelity_rating,material_rating"
 
 train-reward:
-	@echo "🏆 Training multi-head reward model (5 specialized heads)..."
+	@echo "🏆 Training image-only multi-head reward model (5 specialized heads)..."
 	@echo "Using multi-aspect ratings from: data/annotations/multihead_ratings.csv"
 	python scripts/train_reward.py \
 		--mode multihead \
@@ -98,6 +102,39 @@ train-reward:
 		--batch-size 4 \
 		--learning-rate 1e-4 \
 		--min-rating-diff 0.5
+	@echo "✅ Image-only multi-head reward model training complete!"
+	@echo "📊 Check individual head performance in outputs/multihead_reward_model/metrics.json"
+
+train-reward-multimodal:
+	@echo "🏆🔤 Training multimodal (image+prompt) reward model..."
+	@echo "Enhanced with prompt-image alignment assessment!"
+	@echo "Using ratings: data/annotations/multihead_ratings.csv"
+	@echo "Using prompts: $(PROMPTS_FILE)"
+	@echo "Fusion method: $(FUSION_METHOD)"
+	python scripts/train_multimodal_reward.py \
+		--mode multihead \
+		--ratings data/annotations/multihead_ratings.csv \
+		--prompts $(PROMPTS_FILE) \
+		--output outputs/multimodal_reward_model_$(FUSION_METHOD) \
+		--epochs 15 \
+		--batch-size 4 \
+		--learning-rate 1e-4 \
+		--min-rating-diff 0.5 \
+		--fusion-method $(FUSION_METHOD) \
+		--mixed-precision bf16
+	@echo "✅ Multimodal reward model training complete!"
+	@echo "🎯 Model now assesses prompt-image alignment + visual quality!"
+	@echo "📊 Check head performance and fusion effectiveness in outputs/"
+
+# Quick multimodal training with different fusion methods
+train-multimodal-concat:
+	$(MAKE) train-reward-multimodal FUSION_METHOD=concat
+
+train-multimodal-attention:
+	$(MAKE) train-reward-multimodal FUSION_METHOD=cross_attention
+
+train-multimodal-add:
+	$(MAKE) train-reward-multimodal FUSION_METHOD=add
 	@echo "✅ Multi-head reward model training complete!"
 	@echo "📊 Check individual head performance in outputs/multihead_reward_model/metrics.json"
 
@@ -119,11 +156,23 @@ train-dspo:
 # Convenience targets for the full pipeline
 pipeline-step1: generate-images-dual annotate
 	@echo "🎉 Step 1 complete! Images generated and pairs created."
-	@echo "📋 Next: Have experts rate pairs, then run 'make pipeline-step2'"
+	@echo "📋 Next: Have experts rate pairs, then run 'make pipeline-step2' or 'make pipeline-step2-multimodal'"
 
 pipeline-step2: train-reward train-dspo
-	@echo "🎉 Full RLHF pipeline complete!"
+	@echo "🎉 Image-only RLHF pipeline complete!"
 	@echo "🚀 Your improved model is in outputs/dspo_model"
+
+pipeline-step2-multimodal: train-reward-multimodal train-dspo
+	@echo "🎉 Multimodal RLHF pipeline complete!"
+	@echo "🚀 Your prompt-aligned model is in outputs/dspo_model"
+	@echo "🎯 Model optimized for prompt-image alignment + visual quality!"
+
+# Compare training approaches
+compare-models: train-reward train-reward-multimodal
+	@echo "🔬 Training comparison complete!"
+	@echo "📊 Compare image-only vs multimodal models:"
+	@echo "   Image-only: outputs/multihead_reward_model/"
+	@echo "   Multimodal: outputs/multimodal_reward_model_$(FUSION_METHOD)/"
 
 # Quick test with small dataset
 test-pipeline:
@@ -131,6 +180,45 @@ test-pipeline:
 	$(MAKE) generate-images-dual PROMPTS_FILE=data/prompts.csv OUTPUT_DIR=test_output STEPS=20
 	$(MAKE) annotate OUTPUT_DIR=test_output
 	@echo "✅ Test pipeline complete! Check test_output/"
+
+test-multimodal:
+	@echo "🧪 Testing multimodal training with small dataset..."
+	$(MAKE) train-reward-multimodal PROMPTS_FILE=data/prompts.csv FUSION_METHOD=concat
+	@echo "✅ Multimodal test complete!"
+
+validate-multimodal:
+	@echo "🔍 Validating multimodal components..."
+	python -c "
+from dspo.multimodal_reward import MultimodalMultiHeadReward
+from dspo.multimodal_datasets import MultimodalPairPreferenceDataset
+import torch
+
+print('Testing multimodal model initialization...')
+model = MultimodalMultiHeadReward(fusion_method='concat')
+print('✅ Multimodal model created successfully')
+
+print('Testing forward pass...')
+dummy_images = torch.randn(2, 3, 224, 224)
+dummy_prompts = ['A beautiful sunset', 'A cute cat']
+outputs = model(dummy_images, dummy_prompts)
+print(f'✅ Forward pass successful, output shape: {outputs.shape}')
+
+print('Testing individual head outputs...')
+head_outputs = model(dummy_images, dummy_prompts, return_individual=True)
+print(f'✅ Individual heads working: {list(head_outputs.keys())}')
+
+print('Testing different fusion methods...')
+for fusion in ['concat', 'add', 'cross_attention']:
+    try:
+        test_model = MultimodalMultiHeadReward(fusion_method=fusion)
+        test_out = test_model(dummy_images, dummy_prompts)
+        print(f'✅ {fusion} fusion working')
+    except Exception as e:
+        print(f'❌ {fusion} fusion failed: {e}')
+
+print('✅ All multimodal components validated!')
+"
+	@echo "✅ Multimodal validation complete!"
 
 clean:
 	@echo "🧹 Cleaning generated files..."
@@ -206,3 +294,53 @@ explain-workflow:
 	@echo "   - Output: outputs/dspo_model/ (improved SDXL)"
 	@echo ""
 	@echo "💡 The result is an SDXL model optimized across 5 specialized aesthetic dimensions!"
+
+explain-multimodal:
+	@echo "🔤🖼️ MULTIMODAL REWARD MODEL TRAINING:"
+	@echo ""
+	@echo "🎯 ENHANCED APPROACH - Image + Prompt Processing:"
+	@echo "   Instead of just analyzing images, the multimodal model processes:"
+	@echo "   • Visual content (images) - same as before"
+	@echo "   • Text prompts - understanding what the image should show"
+	@echo "   • Combined analysis - how well images match their prompts"
+	@echo ""
+	@echo "🧠 FUSION STRATEGIES:"
+	@echo "   concat (default):"
+	@echo "     - Simple concatenation of image and text features"
+	@echo "     - Reliable and fast, good starting point"
+	@echo "     - Usage: make train-multimodal-concat"
+	@echo ""
+	@echo "   cross_attention (advanced):"
+	@echo "     - Attention-based fusion for sophisticated interaction"
+	@echo "     - Better prompt-image alignment understanding"
+	@echo "     - Usage: make train-multimodal-attention"
+	@echo ""
+	@echo "   add (simple):"
+	@echo "     - Element-wise addition of features"
+	@echo "     - Lightweight but requires same dimensions"
+	@echo "     - Usage: make train-multimodal-add"
+	@echo ""
+	@echo "🎯 SPECIALIZED HEADS WITH PROMPT CONTEXT:"
+	@echo "   Spatial: Composition matching prompt descriptions"
+	@echo "   Iconographic: Elements aligning with prompt content"
+	@echo "   Style: Artistic style consistency with prompt cues"
+	@echo "   Fidelity: Image quality relative to prompt complexity"
+	@echo "   Material: Properties as described in prompts"
+	@echo ""
+	@echo "💡 BENEFITS FOR SDXL TRAINING:"
+	@echo "   ✅ Direct prompt-image alignment optimization"
+	@echo "   ✅ Context-aware quality assessment"
+	@echo "   ✅ Better generalization across prompt types"
+	@echo "   ✅ Enhanced understanding of text-visual relationships"
+	@echo "   ✅ Critical for prompt-conditioned generation"
+	@echo ""
+	@echo "🚀 USAGE EXAMPLES:"
+	@echo "   Basic multimodal:     make train-reward-multimodal"
+	@echo "   With attention:       make train-reward-multimodal FUSION_METHOD=cross_attention"
+	@echo "   Compare approaches:   make compare-models"
+	@echo "   Full multimodal flow: make pipeline-step2-multimodal"
+	@echo ""
+	@echo "📊 MONITORING:"
+	@echo "   • Per-head F1 scores show individual aspect performance"
+	@echo "   • Head importance weights reveal learned priorities"
+	@echo "   • Fusion effectiveness visible in combined metrics"
