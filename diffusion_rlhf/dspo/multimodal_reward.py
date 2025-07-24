@@ -118,7 +118,16 @@ class MultimodalMultiHeadReward(nn.Module):
         
         # Get feature dimensions
         image_feature_dim = self.backbone.visual.output_dim
-        text_feature_dim = self.backbone.text.output_dim
+        # For OpenCLIP, we can get text feature dim from the text projection shape
+        # or use a dummy forward pass to get the actual dimensions
+        if hasattr(self.backbone, 'text_projection') and hasattr(self.backbone.text_projection, 'shape'):
+            text_feature_dim = self.backbone.text_projection.shape[0]
+        else:
+            # Alternative: run a dummy forward pass to get the actual dimensions
+            with torch.no_grad():
+                dummy_text = self.tokenizer(["dummy text"]).to(next(self.backbone.parameters()).device)
+                dummy_features = self.backbone.encode_text(dummy_text)
+                text_feature_dim = dummy_features.shape[-1]
         
         # Set up fusion
         self.fusion_method = fusion_method
