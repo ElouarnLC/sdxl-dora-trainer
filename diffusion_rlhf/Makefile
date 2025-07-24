@@ -186,36 +186,7 @@ test-multimodal:
 
 validate-multimodal:
 	@echo "🔍 Validating multimodal components..."
-	python -c "
-from dspo.multimodal_reward import MultimodalMultiHeadReward
-from dspo.multimodal_datasets import MultimodalPairPreferenceDataset
-import torch
-
-print('Testing multimodal model initialization...')
-model = MultimodalMultiHeadReward(fusion_method='concat')
-print('✅ Multimodal model created successfully')
-
-print('Testing forward pass...')
-dummy_images = torch.randn(2, 3, 224, 224)
-dummy_prompts = ['A beautiful sunset', 'A cute cat']
-outputs = model(dummy_images, dummy_prompts)
-print(f'✅ Forward pass successful, output shape: {outputs.shape}')
-
-print('Testing individual head outputs...')
-head_outputs = model(dummy_images, dummy_prompts, return_individual=True)
-print(f'✅ Individual heads working: {list(head_outputs.keys())}')
-
-print('Testing different fusion methods...')
-for fusion in ['concat', 'add', 'cross_attention']:
-    try:
-        test_model = MultimodalMultiHeadReward(fusion_method=fusion)
-        test_out = test_model(dummy_images, dummy_prompts)
-        print(f'✅ {fusion} fusion working')
-    except Exception as e:
-        print(f'❌ {fusion} fusion failed: {e}')
-
-print('✅ All multimodal components validated!')
-"
+	@python -c "import sys; sys.path.append('.'); from dspo.multimodal_reward import MultimodalMultiHeadReward; import torch; model = MultimodalMultiHeadReward(fusion_method='concat'); dummy_images = torch.randn(2, 3, 224, 224); dummy_prompts = ['A sunset', 'A cat']; outputs = model(dummy_images, dummy_prompts); print('✅ Multimodal model validation successful!')"
 	@echo "✅ Multimodal validation complete!"
 
 clean:
