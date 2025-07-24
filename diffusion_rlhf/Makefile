@@ -135,8 +135,6 @@ train-multimodal-attention:
 
 train-multimodal-add:
 	$(MAKE) train-reward-multimodal FUSION_METHOD=add
-	@echo "✅ Multi-head reward model training complete!"
-	@echo "📊 Check individual head performance in outputs/multihead_reward_model/metrics.json"
 
 train-dspo:
 	@echo "🎯 Training DSPO with multi-head reward feedback..."
