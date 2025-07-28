@@ -2,7 +2,7 @@
 """
 Simple DoRA DSPO Training Script
 
-This script can be run from the root directory and will work with your existing prompts.csv file.
+This script can be run from the diffusion_rlhf directory and will work with your existing prompts.csv file.
 """
 
 import argparse
@@ -10,11 +10,9 @@ import logging
 import sys
 from pathlib import Path
 
-# Add the diffusion_rlhf directory to Python path
-script_dir = Path(__file__).parent
-repo_root = script_dir.parent
-diffusion_rlhf_path = repo_root / "diffusion_rlhf"
-sys.path.append(str(diffusion_rlhf_path))
+# Add the current directory to Python path (we're already in diffusion_rlhf)
+current_dir = Path(__file__).parent
+sys.path.append(str(current_dir))
 
 import torch
 import pandas as pd
@@ -67,6 +65,8 @@ def main():
     parser = argparse.ArgumentParser(description="Simple DoRA DSPO Training")
     parser.add_argument("--prompts", type=str, default="data/prompts.csv",
                        help="Path to prompts CSV file")
+    parser.add_argument("--reward-model", type=str, default="outputs/full_enhanced_final/best/model.pt",
+                       help="Path to trained reward model")
     parser.add_argument("--output", type=str, default="outputs/dspo_simple",
                        help="Output directory")
     parser.add_argument("--num-pairs", type=int, default=50,
@@ -98,8 +98,8 @@ def main():
         
         logger.info("\nTrying alternative locations...")
         alt_paths = [
-            "diffusion_rlhf/data/prompts_example.csv",
-            "diffusion_rlhf/data/prompts_cordeliers.csv"
+            "data/prompts_example.csv",
+            "data/prompts_cordeliers.csv"
         ]
         
         for alt_path in alt_paths:
@@ -110,6 +110,17 @@ def main():
         else:
             logger.error("❌ No prompts file found!")
             return
+    
+    # Check if reward model exists
+    reward_model_path = Path(args.reward_model)
+    if not reward_model_path.exists():
+        logger.error(f"❌ Reward model not found: {reward_model_path}")
+        logger.info("\n💡 Train your reward model first:")
+        logger.info("  python scripts/train_small_dataset.py \\")
+        logger.info("    --data data/annotations/multihead_ratings.csv \\")
+        logger.info("    --prompts data/prompts.csv \\")
+        logger.info("    --output outputs/full_enhanced_final")
+        return
     
     # Load prompts
     logger.info(f"📝 Loading prompts from: {args.prompts}")
@@ -148,8 +159,7 @@ def main():
         logger.info("   pip install diffusers>=0.24.0 transformers>=4.35.0")
         logger.info("   pip install safetensors>=0.4.0")
         logger.info("\nAlso check that you're in the correct environment:")
-        logger.info(f"   Python path: {diffusion_rlhf_path}")
-        logger.info(f"   Path exists: {diffusion_rlhf_path.exists()}")
+        logger.info(f"   Current directory: {current_dir}")
         return
     
     try:
@@ -164,12 +174,14 @@ def main():
         )
         
         logger.info("✅ DSPOFineTuner initialized")
+        logger.info(f"🎯 Using reward model: {args.reward_model}")
         
-        # Note: In a real implementation, you would need a trained reward model
-        # For now, we'll show what the command would be
-        logger.info("\n⚠️  Note: This requires a trained reward model")
-        logger.info("First, you need to train your reward model:")
-        logger.info("  python diffusion_rlhf/scripts/train_enhanced_multimodal_reward.py")
+        # Note: In a real implementation, you would load the reward model and perform training
+        logger.info("\n⚠️  Note: This is a demo version")
+        logger.info("To perform actual DSPO training, you would:")
+        logger.info(f"1. Load reward model from: {args.reward_model}")
+        logger.info("2. Generate real preference pairs using the reward model")
+        logger.info("3. Run the DSPO training loop")
         
         logger.info(f"\n🎯 Training would proceed with {args.num_steps} steps")
         logger.info(f"📂 Output directory: {args.output}")
