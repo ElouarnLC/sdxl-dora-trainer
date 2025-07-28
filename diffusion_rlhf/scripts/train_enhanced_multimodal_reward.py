@@ -375,25 +375,37 @@ def validate_enhanced_epoch(
     
     # Calculate comprehensive metrics
     avg_loss = total_loss / len(val_loader)
-    accuracy = accuracy_score(all_labels, all_predictions)
-    f1 = f1_score(all_labels, all_predictions, average="binary")
+    
+    # Convert to numpy arrays and ensure proper types
+    all_predictions = np.array(all_predictions).astype(int)
+    all_labels = np.array(all_labels)
+    all_probs = np.array(all_probs)
+    
+    # Convert continuous labels to binary (>0.5 = 1, <=0.5 = 0)
+    if all_labels.dtype in [np.float32, np.float64]:
+        binary_labels = (all_labels > 0.5).astype(int)
+    else:
+        binary_labels = all_labels.astype(int)
+    
+    accuracy = accuracy_score(binary_labels, all_predictions)
+    f1 = f1_score(binary_labels, all_predictions, average="binary")
     
     # AUC-ROC for better evaluation
     try:
-        auc_roc = roc_auc_score(all_labels, all_probs)
+        auc_roc = roc_auc_score(binary_labels, all_probs)
     except ValueError:
         auc_roc = 0.5  # Default if only one class
     
     # Confidence and calibration metrics
-    confidences = np.abs(np.array(all_probs) - 0.5) * 2
+    confidences = np.abs(all_probs - 0.5) * 2
     avg_confidence = np.mean(confidences)
     
     # Accuracy at different confidence thresholds
     high_conf_mask = confidences > 0.8
     if np.sum(high_conf_mask) > 0:
         high_conf_accuracy = accuracy_score(
-            np.array(all_labels)[high_conf_mask],
-            np.array(all_predictions)[high_conf_mask]
+            binary_labels[high_conf_mask],
+            all_predictions[high_conf_mask]
         )
     else:
         high_conf_accuracy = 0.0
