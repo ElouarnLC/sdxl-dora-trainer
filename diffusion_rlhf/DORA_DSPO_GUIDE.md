@@ -32,7 +32,7 @@ This will verify:
 ### 2. Start DoRA DSPO Training
 ```bash
 python diffusion_rlhf/scripts/train_dspo_with_dora.py \
-  --prompts diffusion_rlhf/data/prompts_example.csv \
+  --prompts diffusion_rlhf/data/prompts.csv \
   --output outputs/dspo_dora_training \
   --num-pairs 100 \
   --epochs 10 \

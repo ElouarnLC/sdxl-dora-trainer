@@ -31,7 +31,7 @@ def check_requirements():
         return False
     
     # Check prompts
-    prompts_path = Path("diffusion_rlhf/data/prompts_example.csv")
+    prompts_path = Path("diffusion_rlhf/data/prompts.csv")
     if prompts_path.exists():
         checks.append("✅ Example prompts found")
     else:
@@ -56,7 +56,7 @@ def create_quick_config():
     return {
         "model_name": "stabilityai/stable-diffusion-xl-base-1.0",
         "reward_model": "outputs/full_enhanced_final/best/model.pt",
-        "prompts": "diffusion_rlhf/data/prompts_example.csv",
+        "prompts": "diffusion_rlhf/data/prompts.csv",
         "output": "outputs/dspo_dora_quick",
         "num_pairs": 50,  # Start small for testing
         "epochs": 5,
