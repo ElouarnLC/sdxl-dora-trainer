@@ -586,7 +586,12 @@ class EnhancedMultimodalMultiHeadReward(nn.Module):
                     # Use the corresponding label column
                     if i < labels.size(1):
                         head_labels = labels[:, i]
-                        head_loss = self.criterion(head_logits.squeeze(), head_labels)
+                        # Ensure consistent shapes for loss computation
+                        if head_logits.dim() > 1:
+                            head_logits = head_logits.squeeze(-1)
+                        if head_labels.dim() > 1:
+                            head_labels = head_labels.squeeze(-1)
+                        head_loss = self.criterion(head_logits, head_labels)
                         total_loss += head_loss
                         num_heads += 1
                 
@@ -597,7 +602,12 @@ class EnhancedMultimodalMultiHeadReward(nn.Module):
                 # Also add the combined loss with averaged labels
                 combined_labels = labels.mean(dim=1)
                 combined_logits = reward_pos - reward_neg
-                combined_loss = self.criterion(combined_logits.squeeze(), combined_labels)
+                # Ensure consistent shapes for loss computation
+                if combined_logits.dim() > 1:
+                    combined_logits = combined_logits.squeeze(-1)
+                if combined_labels.dim() > 1:
+                    combined_labels = combined_labels.squeeze(-1)
+                combined_loss = self.criterion(combined_logits, combined_labels)
                 
                 # Weighted combination
                 return 0.7 * total_loss + 0.3 * combined_loss
