@@ -532,13 +532,14 @@ def train_enhanced_multimodal_reward_model(
             transform=model_transform,  # Use model's preprocessing
         )
     
-    # Create dataloaders
+    # Create dataloaders with safety for small datasets
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.get("batch_size", 8),
         shuffle=True,
         num_workers=config.get("num_workers", 4),
         pin_memory=True,
+        drop_last=False,  # Don't drop last batch for small datasets
     )
     
     val_loader = DataLoader(
@@ -547,6 +548,7 @@ def train_enhanced_multimodal_reward_model(
         shuffle=False,
         num_workers=config.get("num_workers", 4),
         pin_memory=True,
+        drop_last=False,  # Don't drop last batch for small datasets
     )
     
     # Set up enhanced optimizer

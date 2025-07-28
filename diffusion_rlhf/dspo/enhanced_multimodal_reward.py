@@ -79,14 +79,14 @@ class ImprovedMLPHead(nn.Module):
     ----------
     input_dim : int
         Input feature dimension
-    hidden_dims : List[int], default=[512, 256]
+    hidden_dims : list[int], default=[512, 256]
         Hidden layer dimensions
     output_dim : int, default=1
         Output dimension
     dropout : float, default=0.1
         Dropout probability
-    use_batch_norm : bool, default=True
-        Whether to use batch normalization
+    use_batch_norm : bool, default=False
+        Whether to use batch normalization (disabled by default for small batches)
     activation : str, default="gelu"
         Activation function
     """
@@ -94,13 +94,16 @@ class ImprovedMLPHead(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        hidden_dims: List[int] = [512, 256],
+        hidden_dims: list[int] = None,
         output_dim: int = 1,
         dropout: float = 0.1,
-        use_batch_norm: bool = True,
+        use_batch_norm: bool = False,  # Changed default to False
         activation: str = "gelu",
     ) -> None:
         super().__init__()
+        
+        if hidden_dims is None:
+            hidden_dims = [512, 256]
         
         layers = []
         prev_dim = input_dim
@@ -108,8 +111,12 @@ class ImprovedMLPHead(nn.Module):
         for hidden_dim in hidden_dims:
             layers.append(nn.Linear(prev_dim, hidden_dim))
             
+            # Only use batch norm if explicitly requested and safe
             if use_batch_norm:
                 layers.append(nn.BatchNorm1d(hidden_dim))
+            else:
+                # Use Layer Norm instead, which works with batch size 1
+                layers.append(nn.LayerNorm(hidden_dim))
             
             if activation == "gelu":
                 layers.append(nn.GELU())
@@ -446,13 +453,13 @@ class EnhancedMultimodalMultiHeadReward(nn.Module):
         else:
             raise ValueError(f"Unknown fusion method: {fusion_method}")
         
-        # Create enhanced heads with better architecture
+        # Create enhanced heads with better architecture (no batch norm for small batches)
         self.heads = nn.ModuleDict({
-            "spatial": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout),
-            "icono": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout),
-            "style": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout),
-            "fidelity": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout),
-            "material": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout),
+            "spatial": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout, use_batch_norm=False),
+            "icono": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout, use_batch_norm=False),
+            "style": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout, use_batch_norm=False),
+            "fidelity": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout, use_batch_norm=False),
+            "material": ImprovedMLPHead(fused_dim, hidden_dims, 1, dropout, use_batch_norm=False),
         })
         
         # Enhanced learnable weights with better initialization
