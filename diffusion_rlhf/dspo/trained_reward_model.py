@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 import open_clip
 
-from dspo.enhanced_multimodal_reward import EnhancedMultimodalMultiHeadReward
+from .enhanced_multimodal_reward import EnhancedMultimodalMultiHeadReward
 
 logger = logging.getLogger(__name__)
 
