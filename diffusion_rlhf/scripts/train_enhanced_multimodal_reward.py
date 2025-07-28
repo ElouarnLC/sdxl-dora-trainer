@@ -599,7 +599,20 @@ def train_enhanced_multimodal_reward_model(
                 # Save with EMA weights
                 if ema:
                     ema.apply_shadow()
-                accelerator.unwrap_model(model).save_pretrained(output_path / "best")
+                
+                # Save model state dict instead of using save_pretrained
+                model_to_save = accelerator.unwrap_model(model)
+                torch.save({
+                    'model_state_dict': model_to_save.state_dict(),
+                    'config': config,
+                    'metrics': {
+                        'f1': best_f1,
+                        'auc': best_auc,
+                        'epoch': epoch
+                    }
+                }, output_path / "best" / "model.pt")
+                (output_path / "best").mkdir(exist_ok=True)
+                
                 if ema:
                     ema.restore()
         else:
@@ -614,9 +627,20 @@ def train_enhanced_multimodal_reward_model(
         if epoch % config.get("save_every", 5) == 0 and accelerator.is_main_process:
             if ema:
                 ema.apply_shadow()
-            accelerator.unwrap_model(model).save_pretrained(
-                output_path / f"checkpoint-{epoch}"
-            )
+            
+            # Save checkpoint
+            model_to_save = accelerator.unwrap_model(model)
+            checkpoint_dir = output_path / f"checkpoint-{epoch}"
+            checkpoint_dir.mkdir(exist_ok=True)
+            torch.save({
+                'model_state_dict': model_to_save.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'config': config,
+                'epoch': epoch,
+                'metrics': metrics
+            }, checkpoint_dir / "model.pt")
+            
             if ema:
                 ema.restore()
     
@@ -624,7 +648,21 @@ def train_enhanced_multimodal_reward_model(
     if accelerator.is_main_process:
         if ema:
             ema.apply_shadow()
-        accelerator.unwrap_model(model).save_pretrained(output_path / "final")
+        
+        # Save final model
+        model_to_save = accelerator.unwrap_model(model)
+        final_dir = output_path / "final"
+        final_dir.mkdir(exist_ok=True)
+        torch.save({
+            'model_state_dict': model_to_save.state_dict(),
+            'config': config,
+            'final_metrics': {
+                'f1': best_f1,
+                'auc': best_auc,
+                'final_epoch': epoch
+            }
+        }, final_dir / "model.pt")
+        
         logger.info(f"Training completed. Best F1: {best_f1:.4f}, Best AUC: {best_auc:.4f}")
         logger.info(f"Models saved to {output_path}")
 
