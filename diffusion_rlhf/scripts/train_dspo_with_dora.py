@@ -11,6 +11,7 @@ Uses the existing DSPOFineTuner class which properly implements DSPO training.
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +20,11 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader
 
+# Add the parent directory to path for imports
+sys.path.append(str(Path(__file__).parent.parent.parent))
+
 # Import existing DSPO infrastructure
-from dspo.tuner import DSPOFineTuner
+from diffusion_rlhf.dspo.tuner import DSPOFineTuner
 
 
 # Configure logging
@@ -111,7 +115,7 @@ def generate_preference_pairs(
         Generated preference pairs
     """
     from diffusers import StableDiffusionXLPipeline
-    from dspo.trained_reward_model import load_reward_model
+    from diffusion_rlhf.dspo.trained_reward_model import load_reward_model
     
     logger.info(f"🎨 Generating {num_pairs} preference pairs...")
     

@@ -22,19 +22,36 @@ def check_requirements():
     """Check if all required components are available."""
     checks = []
     
-    # Check reward model
-    reward_model_path = Path("outputs/full_enhanced_final/best/model.pt")
-    if reward_model_path.exists():
-        checks.append("✅ Reward model found")
-    else:
+    # Check reward model (flexible paths)
+    reward_model_paths = [
+        Path("outputs/full_enhanced_final/best/model.pt"),
+        Path("diffusion_rlhf/outputs/full_enhanced_final/best/model.pt"),
+    ]
+    reward_model_found = False
+    for path in reward_model_paths:
+        if path.exists():
+            checks.append("✅ Reward model found")
+            reward_model_found = True
+            break
+    
+    if not reward_model_found:
         checks.append("❌ Reward model not found - run enhanced training first")
         return False
     
-    # Check prompts
-    prompts_path = Path("diffusion_rlhf/data/prompts.csv")
-    if prompts_path.exists():
-        checks.append("✅ Example prompts found")
-    else:
+    # Check prompts (flexible paths)
+    prompts_paths = [
+        Path("diffusion_rlhf/data/prompts_example.csv"),
+        Path("diffusion_rlhf/data/prompts_cordeliers.csv"),
+        Path("data/prompts.csv"),  # User mentioned this path
+    ]
+    prompts_found = False
+    for path in prompts_paths:
+        if path.exists():
+            checks.append(f"✅ Example prompts found: {path}")
+            prompts_found = True
+            break
+    
+    if not prompts_found:
         checks.append("⚠️ Example prompts not found - will use provided path")
     
     # Check DSPO trainer
@@ -56,13 +73,13 @@ def create_quick_config():
     return {
         "model_name": "stabilityai/stable-diffusion-xl-base-1.0",
         "reward_model": "outputs/full_enhanced_final/best/model.pt",
-        "prompts": "diffusion_rlhf/data/prompts.csv",
+        "prompts": "diffusion_rlhf/data/prompts_example.csv",  # Use existing prompts
         "output": "outputs/dspo_dora_quick",
         "num_pairs": 50,  # Start small for testing
-        "epochs": 5,
-        "lr": 1e-5,
-        "dora_rank": 16,  # Conservative for initial run
-        "dora_alpha": 16.0,
+        "num_steps": 1000,  # Use steps instead of epochs
+        "lr": 5e-5,
+        "rank": 16,  # Conservative for initial run
+        "alpha": 64,  # 4 * rank as default
     }
 
 
@@ -94,7 +111,9 @@ def main():
         "--reward-model", str(config["reward_model"]),
         "--model-name", str(config["model_name"]),
         "--num-pairs", str(config["num_pairs"]),
-        "--epochs", str(config["epochs"]),
+        "--num-steps", str(config["num_steps"]),  # Use steps instead of epochs
+        "--rank", str(config["rank"]),
+        "--alpha", str(config["alpha"]),
         "--lr", str(config["lr"]),
     ]
     
