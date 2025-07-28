@@ -452,8 +452,28 @@ def train_enhanced_multimodal_reward_model(
         project_dir=output_path / "logs",
     )
     
-    # Determine dataset type
+    # Initialize enhanced model first to get preprocessing transforms
+    model = EnhancedMultimodalMultiHeadReward(
+        model_name=config.get("model_name", "ViT-L-14-336"),
+        fusion_method=config.get("fusion_method", "attention"),
+        loss_type=config.get("loss_type", "focal"),
+        hidden_dims=config.get("hidden_dims", [512, 256]),
+        dropout=config.get("dropout", 0.15),
+        temperature=config.get("temperature", 0.07),
+    )
+    
+    # Determine dataset type and create with proper transforms
     data_path = Path(data_file)
+    
+    # Use the model's preprocessing transforms for correct image size
+    model_transform = model.preprocess
+    
+    # Log the transform details for debugging
+    if accelerator.is_main_process:
+        logger.info(f"Using model preprocessing transforms for {config.get('model_name', 'ViT-L-14-336')}")
+        logger.info(f"Transform details: {model_transform}")
+    
+    
     if data_path.suffix == ".jsonl":
         # Pairs dataset
         train_dataset = MultimodalPairPreferenceDataset(
@@ -461,6 +481,7 @@ def train_enhanced_multimodal_reward_model(
             prompts_file=prompts_file,
             split="train",
             val_split=config.get("val_split", 0.2),
+            transform=model_transform,  # Use model's preprocessing
         )
         
         val_dataset = MultimodalPairPreferenceDataset(
@@ -468,6 +489,7 @@ def train_enhanced_multimodal_reward_model(
             prompts_file=prompts_file,
             split="val",
             val_split=config.get("val_split", 0.2),
+            transform=model_transform,  # Use model's preprocessing
         )
     else:
         # Multi-head ratings dataset
@@ -477,6 +499,7 @@ def train_enhanced_multimodal_reward_model(
             split="train",
             val_split=config.get("val_split", 0.2),
             min_rating_diff=config.get("min_rating_diff", 0.5),
+            transform=model_transform,  # Use model's preprocessing
         )
         
         val_dataset = MultimodalMultiHeadPairPreferenceDataset(
@@ -485,6 +508,7 @@ def train_enhanced_multimodal_reward_model(
             split="val",
             val_split=config.get("val_split", 0.2),
             min_rating_diff=config.get("min_rating_diff", 0.5),
+            transform=model_transform,  # Use model's preprocessing
         )
     
     # Create dataloaders
@@ -502,16 +526,6 @@ def train_enhanced_multimodal_reward_model(
         shuffle=False,
         num_workers=config.get("num_workers", 4),
         pin_memory=True,
-    )
-    
-    # Initialize enhanced model
-    model = EnhancedMultimodalMultiHeadReward(
-        model_name=config.get("model_name", "ViT-L-14-336"),
-        fusion_method=config.get("fusion_method", "attention"),
-        loss_type=config.get("loss_type", "focal"),
-        hidden_dims=config.get("hidden_dims", [512, 256]),
-        dropout=config.get("dropout", 0.15),
-        temperature=config.get("temperature", 0.07),
     )
     
     # Set up enhanced optimizer
