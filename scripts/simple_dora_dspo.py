@@ -11,12 +11,22 @@ import sys
 from pathlib import Path
 
 # Add the diffusion_rlhf directory to Python path
-sys.path.append(str(Path(__file__).parent / "diffusion_rlhf"))
+script_dir = Path(__file__).parent
+repo_root = script_dir.parent
+diffusion_rlhf_path = repo_root / "diffusion_rlhf"
+sys.path.append(str(diffusion_rlhf_path))
 
 import torch
 import pandas as pd
-from dspo.tuner import DSPOFineTuner
 from torch.utils.data import Dataset, DataLoader
+
+# Try to import DSPOFineTuner with better error handling
+try:
+    from dspo.tuner import DSPOFineTuner
+    DSPO_AVAILABLE = True
+except ImportError as e:
+    DSPO_AVAILABLE = False
+    DSPO_IMPORT_ERROR = str(e)
 
 # Configure logging
 logging.basicConfig(
@@ -130,6 +140,17 @@ def main():
     
     # Initialize DSPO fine-tuner
     logger.info("🔧 Initializing DSPOFineTuner...")
+    
+    if not DSPO_AVAILABLE:
+        logger.error(f"❌ DSPO not available: {DSPO_IMPORT_ERROR}")
+        logger.info("\n💡 To fix this, make sure you have installed the required dependencies:")
+        logger.info("   pip install open-clip-torch>=2.24.0 peft>=0.7.0 accelerate>=0.24.0")
+        logger.info("   pip install diffusers>=0.24.0 transformers>=4.35.0")
+        logger.info("   pip install safetensors>=0.4.0")
+        logger.info("\nAlso check that you're in the correct environment:")
+        logger.info(f"   Python path: {diffusion_rlhf_path}")
+        logger.info(f"   Path exists: {diffusion_rlhf_path.exists()}")
+        return
     
     try:
         tuner = DSPOFineTuner(
