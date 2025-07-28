@@ -600,7 +600,10 @@ def train_enhanced_multimodal_reward_model(
                 if ema:
                     ema.apply_shadow()
                 
-                # Save model state dict instead of using save_pretrained
+                # Create directory first, then save model state dict
+                best_dir = output_path / "best"
+                best_dir.mkdir(exist_ok=True)
+                
                 model_to_save = accelerator.unwrap_model(model)
                 torch.save({
                     'model_state_dict': model_to_save.state_dict(),
@@ -610,8 +613,7 @@ def train_enhanced_multimodal_reward_model(
                         'auc': best_auc,
                         'epoch': epoch
                     }
-                }, output_path / "best" / "model.pt")
-                (output_path / "best").mkdir(exist_ok=True)
+                }, best_dir / "model.pt")
                 
                 if ema:
                     ema.restore()
