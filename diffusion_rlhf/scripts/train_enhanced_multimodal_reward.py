@@ -171,27 +171,47 @@ def create_enhanced_optimizer(
     # Separate parameters by type for different learning rates
     backbone_params = []
     head_params = []
+    fusion_params = []
     
     for name, param in model.named_parameters():
         if param.requires_grad:
             if "backbone" in name:
                 backbone_params.append(param)
+            elif "fusion" in name or "attention" in name:
+                fusion_params.append(param)
             else:
                 head_params.append(param)
     
-    # Different learning rates for different parts
-    param_groups = [
-        {
+    # Create parameter groups with appropriate learning rates
+    param_groups = []
+    
+    # Only add backbone params if they exist and are trainable
+    if backbone_params:
+        param_groups.append({
             "params": backbone_params,
             "lr": learning_rate * 0.1,  # Lower LR for backbone
             "weight_decay": weight_decay,
-        },
-        {
+        })
+    
+    # Fusion layers get medium learning rate
+    if fusion_params:
+        param_groups.append({
+            "params": fusion_params,
+            "lr": learning_rate * 0.5,  # Medium LR for fusion
+            "weight_decay": weight_decay * 0.5,
+        })
+    
+    # Head layers get full learning rate
+    if head_params:
+        param_groups.append({
             "params": head_params,
             "lr": learning_rate,
             "weight_decay": weight_decay,
-        },
-    ]
+        })
+    
+    # Fallback: if no params were categorized, use all params
+    if not param_groups:
+        param_groups = [{"params": model.parameters(), "lr": learning_rate, "weight_decay": weight_decay}]
     
     optimizer = torch.optim.AdamW(param_groups, betas=betas)
     return optimizer
@@ -460,6 +480,7 @@ def train_enhanced_multimodal_reward_model(
         hidden_dims=config.get("hidden_dims", [512, 256]),
         dropout=config.get("dropout", 0.15),
         temperature=config.get("temperature", 0.07),
+        freeze_backbone=config.get("freeze_backbone", True),  # Use config value
     )
     
     # Determine dataset type and create with proper transforms
@@ -535,9 +556,9 @@ def train_enhanced_multimodal_reward_model(
         weight_decay=config.get("weight_decay", 0.02),
     )
     
-    # Set up scheduler
+    # Set up scheduler with better parameters for small datasets
     num_training_steps = len(train_loader) * config.get("num_epochs", 10)
-    warmup_steps = config.get("warmup_steps", num_training_steps // 10)
+    warmup_steps = config.get("warmup_steps", min(500, num_training_steps // 5))  # Reduce warmup for small datasets
     
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -545,8 +566,13 @@ def train_enhanced_multimodal_reward_model(
         num_training_steps=num_training_steps,
     )
     
-    # Set up augmentation and EMA
-    mixup = MixUpAugmentation(alpha=config.get("mixup_alpha", 0.2))
+    # Set up augmentation and EMA with reduced mixup for small datasets
+    mixup_alpha = config.get("mixup_alpha", 0.2)
+    if len(train_dataset) < 200:  # Reduce mixup for very small datasets
+        mixup_alpha = min(mixup_alpha, 0.1)
+        logger.info(f"Reduced mixup alpha to {mixup_alpha} due to small dataset size")
+    
+    mixup = MixUpAugmentation(alpha=mixup_alpha)
     ema = EMA(model, decay=config.get("ema_decay", 0.999))
     
     # Prepare for training
@@ -554,10 +580,22 @@ def train_enhanced_multimodal_reward_model(
         model, optimizer, train_loader, val_loader, scheduler
     )
     
-    logger.info("Enhanced multimodal reward model training started")
-    logger.info(f"Training samples: {len(train_dataset)}")
-    logger.info(f"Validation samples: {len(val_dataset)}")
-    logger.info(f"Configuration: {config}")
+    # Log detailed training setup
+    if accelerator.is_main_process:
+        logger.info("Enhanced multimodal reward model training started")
+        logger.info(f"Training samples: {len(train_dataset)}")
+        logger.info(f"Validation samples: {len(val_dataset)}")
+        logger.info(f"Effective batch size: {config.get('batch_size', 8) * config.get('gradient_accumulation_steps', 1)}")
+        logger.info(f"Learning rate: {config.get('learning_rate', 5e-5)}")
+        logger.info(f"Warmup steps: {warmup_steps} / {num_training_steps}")
+        logger.info(f"Mixup alpha: {mixup_alpha}")
+        
+        # Log optimizer parameter groups
+        for i, group in enumerate(optimizer.param_groups):
+            param_count = sum(p.numel() for p in group['params'])
+            logger.info(f"Parameter group {i}: {param_count} params, LR: {group['lr']:.2e}")
+        
+        logger.info(f"Configuration: {config}")
     
     best_f1 = 0.0
     best_auc = 0.0

@@ -641,31 +641,38 @@ class EnhancedMultimodalMultiHeadReward(nn.Module):
 
 
 def create_enhanced_training_config() -> Dict[str, Any]:
-    """Create enhanced training configuration with better hyperparameters."""
+    """Create enhanced training configuration optimized for small datasets."""
     return {
         # Model architecture
         "model_name": "ViT-L-14-336",  # Higher resolution for better performance
         "fusion_method": "attention",   # Advanced fusion
         "loss_type": "focal",          # Better handling of imbalanced data
         "hidden_dims": [768, 384, 192], # Deeper network
-        "dropout": 0.15,               # Moderate regularization
+        "dropout": 0.1,                # Reduced dropout for small datasets
+        "freeze_backbone": False,      # Unfreeze backbone for better learning
         
-        # Training dynamics
-        "learning_rate": 5e-5,         # Lower LR for stability
-        "weight_decay": 0.02,          # L2 regularization
-        "batch_size": 16,              # Larger batches for stability
-        "warmup_steps": 500,           # Learning rate warmup
+        # Training dynamics - optimized for small datasets
+        "learning_rate": 1e-4,         # Higher LR since backbone is unfrozen
+        "weight_decay": 0.01,          # Reduced weight decay
+        "batch_size": 8,               # Smaller batches for stability
+        "num_epochs": 30,              # More epochs for small datasets
+        "gradient_accumulation_steps": 4, # Increase effective batch size
         "max_grad_norm": 1.0,          # Gradient clipping
+        "warmup_steps": 100,           # Reduced warmup for small datasets
         
-        # Data augmentation
-        "mixup_alpha": 0.2,            # Mixup augmentation
-        "cutmix_alpha": 1.0,           # CutMix augmentation
-        "label_smoothing": 0.1,        # Label smoothing
+        # Data augmentation - reduced for small datasets
+        "mixup_alpha": 0.1,            # Reduced mixup
+        "label_smoothing": 0.05,       # Reduced label smoothing
         
         # Regularization
-        "temperature": 0.05,           # Temperature scaling
-        "margin": 0.3,                 # Contrastive margin
-        "ema_decay": 0.999,            # Exponential moving average
+        "temperature": 0.1,            # Higher temperature for better gradients
+        "ema_decay": 0.99,             # Faster EMA decay for small datasets
+        
+        # Early stopping and checkpoints
+        "patience": 8,                 # Increased patience
+        "save_every": 5,
+        "val_split": 0.15,             # Smaller validation split
+        "min_rating_diff": 0.5,        # Lower threshold for more pairs
         
         # Optimization
         "scheduler": "cosine_with_warmup",
