@@ -105,26 +105,34 @@ class EMA:
         self.shadow = {}
         self.backup = {}
         
-        # Initialize shadow weights
+        # Initialize shadow weights on the same device as model
         for name, param in model.named_parameters():
             if param.requires_grad:
-                self.shadow[name] = param.data.clone()
+                self.shadow[name] = param.data.clone().detach()
     
     def update(self):
         """Update EMA weights."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.shadow
+                # Ensure shadow is on the same device as param
+                if self.shadow[name].device != param.device:
+                    self.shadow[name] = self.shadow[name].to(param.device)
+                
                 new_average = (1.0 - self.decay) * param.data + self.decay * self.shadow[name]
-                self.shadow[name] = new_average.clone()
+                self.shadow[name] = new_average.clone().detach()
     
     def apply_shadow(self):
         """Apply EMA weights to model."""
         for name, param in self.model.named_parameters():
             if param.requires_grad:
                 assert name in self.shadow
-                self.backup[name] = param.data
-                param.data = self.shadow[name]
+                # Ensure shadow is on the same device as param
+                if self.shadow[name].device != param.device:
+                    self.shadow[name] = self.shadow[name].to(param.device)
+                
+                self.backup[name] = param.data.clone()
+                param.data = self.shadow[name].clone()
     
     def restore(self):
         """Restore original weights."""
@@ -333,14 +341,6 @@ def validate_enhanced_epoch(
         ):
             # Forward pass
             loss = model.compute_enhanced_loss(
-                img_pos=batch["img_pos"],
-                img_neg=batch["img_neg"],
-                prompts=batch["prompt"],
-                labels=batch.get("label", batch.get("labels")),
-            )
-            
-            # Get enhanced metrics
-            metrics = model.get_enhanced_metrics(
                 img_pos=batch["img_pos"],
                 img_neg=batch["img_neg"],
                 prompts=batch["prompt"],
