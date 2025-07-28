@@ -355,8 +355,17 @@ def validate_enhanced_epoch(
             probs = torch.sigmoid(logits)
             predictions = (probs > 0.5).float()
             
+            # Handle both single and multi-head labels
+            batch_labels = batch.get("label", batch.get("labels"))
+            if batch_labels.dim() == 1:
+                # Single preference labels
+                target_labels = batch_labels
+            else:
+                # Multi-head labels - use average for combined metric
+                target_labels = batch_labels.mean(dim=1)
+            
             all_predictions.extend(predictions.cpu().numpy())
-            all_labels.extend(batch.get("label", batch.get("labels")).cpu().numpy())
+            all_labels.extend(target_labels.cpu().numpy())
             all_probs.extend(probs.cpu().numpy())
             total_loss += loss.item()
     

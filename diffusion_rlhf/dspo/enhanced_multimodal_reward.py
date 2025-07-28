@@ -551,16 +551,49 @@ class EnhancedMultimodalMultiHeadReward(nn.Module):
         labels: torch.Tensor,
     ) -> torch.Tensor:
         """Compute enhanced loss with better training dynamics."""
-        # Get reward scores
+        # Get reward scores - both single and individual heads
         reward_pos = self.forward(img_pos, prompts)
         reward_neg = self.forward(img_neg, prompts)
+        
+        # Also get individual head outputs for multi-head loss
+        head_outputs_pos = self.forward(img_pos, prompts, return_individual=True)
+        head_outputs_neg = self.forward(img_neg, prompts, return_individual=True)
         
         if self.loss_type == "contrastive":
             return self.criterion(reward_pos, reward_neg, labels)
         else:
-            # Standard preference learning
-            logits = reward_pos - reward_neg
-            return self.criterion(logits.squeeze(), labels)
+            # Handle both single and multi-head labels
+            if labels.dim() == 1:
+                # Single preference labels
+                logits = reward_pos - reward_neg
+                return self.criterion(logits.squeeze(), labels)
+            else:
+                # Multi-head labels (batch_size, num_heads)
+                total_loss = 0.0
+                num_heads = 0
+                
+                for i, (head_name, head_pos) in enumerate(head_outputs_pos.items()):
+                    head_neg = head_outputs_neg[head_name]
+                    head_logits = head_pos - head_neg
+                    
+                    # Use the corresponding label column
+                    if i < labels.size(1):
+                        head_labels = labels[:, i]
+                        head_loss = self.criterion(head_logits.squeeze(), head_labels)
+                        total_loss += head_loss
+                        num_heads += 1
+                
+                # Average the losses
+                if num_heads > 0:
+                    total_loss = total_loss / num_heads
+                
+                # Also add the combined loss with averaged labels
+                combined_labels = labels.mean(dim=1)
+                combined_logits = reward_pos - reward_neg
+                combined_loss = self.criterion(combined_logits.squeeze(), combined_labels)
+                
+                # Weighted combination
+                return 0.7 * total_loss + 0.3 * combined_loss
     
     def _backbone_frozen(self) -> bool:
         """Check if backbone is frozen."""
@@ -583,7 +616,15 @@ class EnhancedMultimodalMultiHeadReward(nn.Module):
             probs = torch.sigmoid(logits)
             predictions = (probs > 0.5).float()
             
-            accuracy = (predictions.squeeze() == labels).float().mean().item()
+            # Handle both single and multi-head labels
+            if labels.dim() == 1:
+                # Single preference labels
+                target_labels = labels
+            else:
+                # Multi-head labels - use average for combined metric
+                target_labels = labels.mean(dim=1)
+            
+            accuracy = (predictions.squeeze() == target_labels).float().mean().item()
             
             # Confidence-based metrics
             confidence = torch.abs(probs - 0.5) * 2  # Scale to [0, 1]
