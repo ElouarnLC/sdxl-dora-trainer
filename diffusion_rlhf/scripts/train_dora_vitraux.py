@@ -178,16 +178,6 @@ class DoRATrainer:
         )
         
         logger.info("Models set up successfully")
-
-    def _get_add_time_ids(self, original_size, batch_size):
-        """Get time IDs for SDXL."""
-        target_size = original_size
-        crops_coords_top_left = (0, 0)
-        
-        add_time_ids = list(original_size + crops_coords_top_left + target_size)
-        add_time_ids = torch.tensor([add_time_ids], dtype=torch.float32)
-        add_time_ids = add_time_ids.repeat(batch_size, 1)
-        return add_time_ids.to(self.device)
     
     def compute_diffusion_loss(
         self, 
@@ -211,19 +201,46 @@ class DoRATrainer:
         """
         batch_size = images.shape[0]
         
-        # Encode prompts using pipeline's method (handles SDXL properly)
+        # Encode latents
         with torch.no_grad():
-            (
-                prompt_embeds,
-                negative_prompt_embeds,
-                pooled_prompt_embeds,
-                negative_pooled_prompt_embeds,
-            ) = self.pipeline.encode_prompt(
+            # Ensure images are in correct range for VAE
+            images = torch.clamp(images, -1.0, 1.0)
+            latents = self.pipeline.vae.encode(images.float()).latent_dist.sample()
+            latents = latents * self.pipeline.vae.config.scaling_factor
+            latents = latents.to(images.dtype)
+
+        # Encode text properly for SDXL (using both text encoders)
+        with torch.no_grad():
+            # Tokenize prompts for both text encoders
+            tokens_1 = self.pipeline.tokenizer(
                 prompts,
-                device=self.device,
-                num_images_per_prompt=1,
-                do_classifier_free_guidance=False,
-            )
+                max_length=self.pipeline.tokenizer.model_max_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt"
+            ).input_ids.to(self.device)
+
+            tokens_2 = self.pipeline.tokenizer_2(
+                prompts,
+                max_length=self.pipeline.tokenizer_2.model_max_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt"
+            ).input_ids.to(self.device)
+
+            # Encode with both text encoders
+            encoder_output_1 = self.pipeline.text_encoder(tokens_1)
+            prompt_embeds_1 = encoder_output_1.last_hidden_state
+
+            encoder_output_2 = self.pipeline.text_encoder_2(tokens_2)
+            prompt_embeds_2 = encoder_output_2.last_hidden_state
+            pooled_prompt_embeds = encoder_output_2.pooler_output
+
+            # Concatenate text embeddings for SDXL
+            seq_len = min(prompt_embeds_1.shape[1], prompt_embeds_2.shape[1])
+            prompt_embeds_1 = prompt_embeds_1[:, :seq_len, :]
+            prompt_embeds_2 = prompt_embeds_2[:, :seq_len, :]
+            encoder_hidden_states = torch.cat([prompt_embeds_1, prompt_embeds_2], dim=-1)
 
         # Sample random timesteps
         timesteps = torch.randint(
@@ -232,20 +249,26 @@ class DoRATrainer:
         )
 
         # Add noise
-        noise = torch.randn_like(images)
-        noisy_images = self.scheduler.add_noise(images, noise, timesteps)
+        noise = torch.randn_like(latents)
+        noisy_latents = self.scheduler.add_noise(latents, noise, timesteps)
+
+        # Create SDXL conditioning
+        original_size = torch.tensor([[images.shape[-2], images.shape[-1]]] * batch_size).to(self.device)
+        crops_coords_top_left = torch.tensor([[0, 0]] * batch_size).to(self.device)
+        target_size = torch.tensor([[images.shape[-2], images.shape[-1]]] * batch_size).to(self.device)
+
+        added_cond_kwargs = {
+            "text_embeds": pooled_prompt_embeds,
+            "time_ids": torch.cat([original_size, crops_coords_top_left, target_size], dim=1).float()
+        }
 
         # Predict noise with SDXL UNet
         noise_pred = self.unet(
-            noisy_images,
+            noisy_latents,
             timesteps,
-            encoder_hidden_states=prompt_embeds,
-            added_cond_kwargs={
-                "text_embeds": pooled_prompt_embeds,
-                "time_ids": self._get_add_time_ids(images.shape[-2:], batch_size)
-            },
-            return_dict=False
-        )[0]
+            encoder_hidden_states,
+            added_cond_kwargs=added_cond_kwargs
+        ).sample
         
         # Compute MSE loss
         loss = F.mse_loss(noise_pred, noise, reduction='mean')
