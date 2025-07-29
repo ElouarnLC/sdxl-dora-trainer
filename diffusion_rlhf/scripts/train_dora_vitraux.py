@@ -211,15 +211,34 @@ class DoRATrainer:
         """
         batch_size = images.shape[0]
         
-        # Encode prompts for SDXL
-        (prompt_embeds, negative_prompt_embeds,
-         pooled_prompt_embeds, negative_pooled_prompt_embeds
-         ) = self.pipeline.encode_prompt(
-            prompt=prompts,
-            device=self.device,
-            num_images_per_prompt=1,
-            do_classifier_free_guidance=False
-        )
+        # Encode prompts using text encoders directly
+        with torch.no_grad():
+            # Tokenize prompts
+            tokens_1 = self.pipeline.tokenizer(
+                prompts,
+                padding="max_length",
+                max_length=self.pipeline.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt"
+            ).input_ids.to(self.device)
+            
+            tokens_2 = self.pipeline.tokenizer_2(
+                prompts,
+                padding="max_length", 
+                max_length=self.pipeline.tokenizer_2.model_max_length,
+                truncation=True,
+                return_tensors="pt"
+            ).input_ids.to(self.device)
+            
+            # Get text embeddings
+            prompt_embeds_1 = self.pipeline.text_encoder(tokens_1)[0]
+            prompt_embeds_2 = self.pipeline.text_encoder_2(tokens_2)[0]
+            
+            # Concatenate embeddings
+            prompt_embeds = torch.cat([prompt_embeds_1, prompt_embeds_2], dim=-1)
+            
+            # Get pooled embeddings from text_encoder_2
+            pooled_prompt_embeds = self.pipeline.text_encoder_2(tokens_2)[1]
 
         # Sample random timesteps
         timesteps = torch.randint(
@@ -241,7 +260,9 @@ class DoRATrainer:
                 "time_ids": self._get_add_time_ids(images.shape[-2:], batch_size)
             },
             return_dict=False
-        )[0]        # Compute MSE loss
+        )[0]
+        
+        # Compute MSE loss
         loss = F.mse_loss(noise_pred, noise, reduction='mean')
         
         return loss
