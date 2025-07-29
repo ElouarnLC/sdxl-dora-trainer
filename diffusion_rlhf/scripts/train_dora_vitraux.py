@@ -211,49 +211,14 @@ class DoRATrainer:
         """
         batch_size = images.shape[0]
         
-        # Encode prompts using text encoders directly
+        # Encode prompts using pipeline's method (handles SDXL properly)
         with torch.no_grad():
-            # Tokenize prompts
-            tokens_1 = self.pipeline.tokenizer(
+            prompt_embeds, pooled_prompt_embeds = self.pipeline._encode_prompt(
                 prompts,
-                padding="max_length",
-                max_length=self.pipeline.tokenizer.model_max_length,
-                truncation=True,
-                return_tensors="pt"
-            ).input_ids.to(self.device)
-            
-            tokens_2 = self.pipeline.tokenizer_2(
-                prompts,
-                padding="max_length", 
-                max_length=self.pipeline.tokenizer_2.model_max_length,
-                truncation=True,
-                return_tensors="pt"
-            ).input_ids.to(self.device)
-            
-            # Get text embeddings from first encoder
-            encoder_output_1 = self.pipeline.text_encoder(tokens_1)
-            prompt_embeds_1 = encoder_output_1.last_hidden_state
-            
-            # Get text embeddings from second encoder
-            encoder_output_2 = self.pipeline.text_encoder_2(tokens_2)
-            prompt_embeds_2 = encoder_output_2.last_hidden_state
-            
-            # For SDXL, get pooled embeddings from second encoder
-            # Check if pooler_output is available, otherwise use last token
-            if hasattr(encoder_output_2, 'pooler_output') and \
-               encoder_output_2.pooler_output is not None:
-                pooled_prompt_embeds = encoder_output_2.pooler_output
-            else:
-                # Use the last token embedding as pooled representation
-                pooled_prompt_embeds = prompt_embeds_2[:, -1, :]
-            
-            # Make sure both embeddings have the same sequence length
-            seq_len = min(prompt_embeds_1.shape[1], prompt_embeds_2.shape[1])
-            prompt_embeds_1 = prompt_embeds_1[:, :seq_len, :]
-            prompt_embeds_2 = prompt_embeds_2[:, :seq_len, :]
-            
-            # Concatenate embeddings along feature dimension
-            prompt_embeds = torch.cat([prompt_embeds_1, prompt_embeds_2], dim=-1)
+                device=self.device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=False,
+            )
 
         # Sample random timesteps
         timesteps = torch.randint(
