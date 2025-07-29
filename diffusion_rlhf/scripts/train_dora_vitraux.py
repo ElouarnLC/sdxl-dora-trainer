@@ -237,7 +237,15 @@ class DoRATrainer:
             # Get text embeddings from second encoder
             encoder_output_2 = self.pipeline.text_encoder_2(tokens_2)
             prompt_embeds_2 = encoder_output_2.last_hidden_state
-            pooled_prompt_embeds = encoder_output_2.pooler_output
+            
+            # For SDXL, get pooled embeddings from second encoder
+            # Check if pooler_output is available, otherwise use last token
+            if hasattr(encoder_output_2, 'pooler_output') and \
+               encoder_output_2.pooler_output is not None:
+                pooled_prompt_embeds = encoder_output_2.pooler_output
+            else:
+                # Use the last token embedding as pooled representation
+                pooled_prompt_embeds = prompt_embeds_2[:, -1, :]
             
             # Make sure both embeddings have the same sequence length
             seq_len = min(prompt_embeds_1.shape[1], prompt_embeds_2.shape[1])
