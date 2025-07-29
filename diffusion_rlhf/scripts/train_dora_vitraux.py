@@ -213,7 +213,12 @@ class DoRATrainer:
         
         # Encode prompts using pipeline's method (handles SDXL properly)
         with torch.no_grad():
-            prompt_embeds, pooled_prompt_embeds = self.pipeline.encode_prompt(
+            (
+                prompt_embeds,
+                negative_prompt_embeds,
+                pooled_prompt_embeds,
+                negative_pooled_prompt_embeds,
+            ) = self.pipeline.encode_prompt(
                 prompts,
                 device=self.device,
                 num_images_per_prompt=1,
