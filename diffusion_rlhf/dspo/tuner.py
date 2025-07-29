@@ -142,7 +142,7 @@ class DSPOFineTuner:
             target_modules=target_modules,
             lora_dropout=0.1,
             bias="none",
-            task_type="DIFFUSION",
+            task_type="FEATURE_EXTRACTION",  # Changed from "DIFFUSION" to fix PEFT error
             use_dora=True,  # Enable DoRA
         )
         

@@ -203,3 +203,6 @@ diffusion_rlhf/data/annotations/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Datasets
+datasets/
