@@ -230,15 +230,22 @@ class DoRATrainer:
                 return_tensors="pt"
             ).input_ids.to(self.device)
             
-            # Get text embeddings
-            prompt_embeds_1 = self.pipeline.text_encoder(tokens_1)[0]
-            prompt_embeds_2 = self.pipeline.text_encoder_2(tokens_2)[0]
+            # Get text embeddings from first encoder
+            encoder_output_1 = self.pipeline.text_encoder(tokens_1)
+            prompt_embeds_1 = encoder_output_1.last_hidden_state
             
-            # Concatenate embeddings
+            # Get text embeddings from second encoder
+            encoder_output_2 = self.pipeline.text_encoder_2(tokens_2)
+            prompt_embeds_2 = encoder_output_2.last_hidden_state
+            pooled_prompt_embeds = encoder_output_2.pooler_output
+            
+            # Make sure both embeddings have the same sequence length
+            seq_len = min(prompt_embeds_1.shape[1], prompt_embeds_2.shape[1])
+            prompt_embeds_1 = prompt_embeds_1[:, :seq_len, :]
+            prompt_embeds_2 = prompt_embeds_2[:, :seq_len, :]
+            
+            # Concatenate embeddings along feature dimension
             prompt_embeds = torch.cat([prompt_embeds_1, prompt_embeds_2], dim=-1)
-            
-            # Get pooled embeddings from text_encoder_2
-            pooled_prompt_embeds = self.pipeline.text_encoder_2(tokens_2)[1]
 
         # Sample random timesteps
         timesteps = torch.randint(
