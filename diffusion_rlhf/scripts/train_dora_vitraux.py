@@ -205,7 +205,9 @@ class DoRATrainer:
         with torch.no_grad():
             # Ensure images are in correct range for VAE
             images = torch.clamp(images, -1.0, 1.0)
-            latents = self.pipeline.vae.encode(images.float()).latent_dist.sample()
+            # Convert to same dtype as VAE to avoid mismatch
+            vae_dtype = next(self.pipeline.vae.parameters()).dtype
+            latents = self.pipeline.vae.encode(images.to(vae_dtype)).latent_dist.sample()
             latents = latents * self.pipeline.vae.config.scaling_factor
             latents = latents.to(images.dtype)
 
