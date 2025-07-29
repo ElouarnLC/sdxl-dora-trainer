@@ -178,6 +178,16 @@ class DoRATrainer:
         )
         
         logger.info("Models set up successfully")
+
+    def _get_add_time_ids(self, original_size, batch_size):
+        """Get time IDs for SDXL."""
+        target_size = original_size
+        crops_coords_top_left = (0, 0)
+        
+        add_time_ids = list(original_size + crops_coords_top_left + target_size)
+        add_time_ids = torch.tensor([add_time_ids], dtype=torch.float32)
+        add_time_ids = add_time_ids.repeat(batch_size, 1)
+        return add_time_ids.to(self.device)
     
     def compute_diffusion_loss(
         self, 
@@ -201,33 +211,37 @@ class DoRATrainer:
         """
         batch_size = images.shape[0]
         
-        # Encode prompts
-        prompt_embeds, _ = self.pipeline._encode_prompt(
-            prompts,
+        # Encode prompts for SDXL
+        (prompt_embeds, negative_prompt_embeds,
+         pooled_prompt_embeds, negative_pooled_prompt_embeds
+         ) = self.pipeline.encode_prompt(
+            prompt=prompts,
             device=self.device,
             num_images_per_prompt=1,
             do_classifier_free_guidance=False
         )
-        
+
         # Sample random timesteps
         timesteps = torch.randint(
             0, self.scheduler.config.num_train_timesteps,
             (batch_size,), device=self.device
         )
-        
+
         # Add noise
         noise = torch.randn_like(images)
         noisy_images = self.scheduler.add_noise(images, noise, timesteps)
-        
-        # Predict noise
+
+        # Predict noise with SDXL UNet
         noise_pred = self.unet(
             noisy_images,
             timesteps,
             encoder_hidden_states=prompt_embeds,
+            added_cond_kwargs={
+                "text_embeds": pooled_prompt_embeds,
+                "time_ids": self._get_add_time_ids(images.shape[-2:], batch_size)
+            },
             return_dict=False
-        )[0]
-        
-        # Compute MSE loss
+        )[0]        # Compute MSE loss
         loss = F.mse_loss(noise_pred, noise, reduction='mean')
         
         return loss
