@@ -2,31 +2,20 @@
 
 A production-ready tool for fine-tuning Stable Diffusion XL models using **DoRA (Weight-Decomposed Low-Rank Adaptation)**, which is more efficient and effective than traditional LoRA.
 
-## 🚨 Important: Black Image Issue Fixed!
+## Important: Black Image Issue Fixed!
 
 **If you're experiencing black/empty images during generation, see [docs/BLACK_IMAGE_FIX.md](docs/BLACK_IMAGE_FIX.md) for the solution!**
 
 **TL;DR:** Use `--mixed_precision no` instead of `fp16` to fix black image generation with DoRA.
 
-## 🚀 Features
-
-- **DoRA Integration**: Uses the latest DoRA technique for more efficient fine-tuning
-- **Production Ready**: Robust error handling, logging, and monitoring
-- **Memory Optimized**: Support for gradient checkpointing, 8-bit optimizers, and mixed precision
-- **Flexible Configuration**: YAML/JSON config files and command-line arguments
-- **Multi-GPU Support**: Built on Accelerate for distributed training
-- **Comprehensive Logging**: TensorBoard and Weights & Biases integration
-- **CLI Tools**: Utilities for dataset analysis and environment checking
-- **Cross-Platform**: Works on Windows, Linux, and macOS
-
-## 📋 Requirements
+## Requirements
 
 - Python 3.8+
 - NVIDIA GPU with 12GB+ VRAM (16GB+ recommended for 1024px training)
 - CUDA 11.8 or 12.1
 - 20GB+ free disk space
 
-## 🛠️ Quick Setup
+## Quick Setup
 
 ### Option 1: Automated Setup (Recommended)
 
@@ -52,7 +41,7 @@ pip install -r requirements.txt
 mkdir -p output cache logs datasets
 ```
 
-## 🚦 Quick Start
+## Quick Start
 
 ### 1. Prepare Your Dataset
 
@@ -115,7 +104,7 @@ python sdxl_dora_trainer.py \
 python sdxl_dora_trainer.py --config config.yaml
 ```
 
-## ⚙️ Configuration
+## Configuration
 
 ### Key Parameters
 
@@ -160,7 +149,7 @@ report_to: "wandb"
 project_name: "my-custom-model"
 ```
 
-## 🔧 Utilities
+## Utilities
 
 ### Environment Check
 ```bash
@@ -189,7 +178,7 @@ python config_manager.py create --config config.yaml
 python config_manager.py validate --config config.yaml
 ```
 
-## 📊 Monitoring Training
+## Monitoring Training
 
 ### TensorBoard (Default)
 ```bash
@@ -207,7 +196,7 @@ During training, the tool will:
 - Log training metrics continuously
 - Display progress with rich terminal interface
 
-## 📁 Output Structure
+## Output Structure
 
 After training, your output directory will look like this:
 
@@ -233,7 +222,7 @@ logs/
 └── training.log                    # Text logs
 ```
 
-## 🎯 DoRA vs LoRA
+## Why using DoRA instead LoRA ?
 
 DoRA (Weight-Decomposed Low-Rank Adaptation) offers several advantages over traditional LoRA:
 
@@ -242,7 +231,7 @@ DoRA (Weight-Decomposed Low-Rank Adaptation) offers several advantages over trad
 - **Improved Convergence**: Faster and more reliable training
 - **Better Fine-grained Control**: More precise adaptation to your dataset
 
-## 💡 Tips for Better Results
+## Tips
 
 ### Dataset Preparation
 - Use high-quality images (avoid blurry, low-res, or corrupted images)
@@ -262,7 +251,7 @@ DoRA (Weight-Decomposed Low-Rank Adaptation) offers several advantages over trad
 - Use fp16 mixed precision for 2x speedup
 - Reduce batch size and increase gradient accumulation steps if OOM
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -318,94 +307,13 @@ pip install -r requirements.txt --force-reinstall
 python utils.py check-env
 ```
 
-## 📁 Repository Structure
-
-```
-sdxl-dora-trainer/
-├── 📄 README.md                    # Main documentation
-├── 📄 LICENSE                      # MIT License
-├── 📄 CHANGELOG.md                 # Version history
-├── 📄 pyproject.toml               # Modern Python packaging
-├── 📄 setup.cfg                    # Setup configuration
-├── 📄 requirements.txt             # Production dependencies
-├── 📄 requirements-dev.txt         # Development dependencies
-├── 📄 .gitignore                   # Git ignore rules
-│
-├── 📄 sdxl_dora_trainer.py         # Main training script
-├── 📄 inference.py                 # Inference script
-├── 📄 config_manager.py            # Configuration management
-├── 📄 utils.py                     # Utility functions
-├── 📄 setup.py                     # Automated setup script
-│
-├── 📂 docs/                        # Documentation
-│   ├── 📄 BLACK_IMAGE_FIX.md       # ⚠️ IMPORTANT: Black image fix
-│   ├── 📄 INSTALLATION.md          # Installation guide
-│   ├── 📄 API.md                   # API reference
-│   └── 📄 CONTRIBUTING.md          # Contributing guidelines
-│
-├── 📂 examples/                    # Example configurations
-│   ├── 📄 basic_config.yaml        # Basic training config
-│   ├── 📄 advanced_config.yaml     # Advanced training config
-│   ├── 📄 memory_optimized_config.yaml # Low-memory config
-│   ├── 📄 train_example.py         # Training example script
-│   └── 📄 inference_example.py     # Inference example script
-│
-├── 📂 scripts/                     # Utility scripts
-│   ├── 📄 validate_dataset.py      # Dataset validation
-│   ├── 📄 debug_dora_weights.py    # Debug DoRA weights
-│   ├── 📄 fix_dora_weights.py      # Fix corrupted weights
-│   └── 📄 batch_train.py           # Batch training script
-│
-├── 📂 tests/                       # Test suite
-│   ├── 📄 test_setup.py            # Setup tests
-│   ├── 📄 test_device_allocation.py # GPU tests
-│   ├── 📄 test_sdxl_simple.py      # SDXL tests
-│   └── 📄 test_vae_encoding.py     # VAE tests
-│
-└── 📂 .github/                     # GitHub specific files
-    ├── 📂 ISSUE_TEMPLATE/
-    │   ├── 📄 bug_report.md
-    │   └── 📄 feature_request.md
-    └── 📄 pull_request_template.md
-```
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
-
-### Development Setup
-```bash
-git clone https://github.com/ElouarnLC/sdxl-dora-trainer.git
-cd sdxl-dora-trainer
-pip install -r requirements.txt
-pip install -e .
-```
-
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Libraries used
 
 - [Diffusers](https://github.com/huggingface/diffusers) - The foundation for stable diffusion training
 - [PEFT](https://github.com/huggingface/peft) - DoRA implementation
 - [Accelerate](https://github.com/huggingface/accelerate) - Distributed training support
 - [Rich](https://github.com/Textualize/rich) - Beautiful terminal interface
-
-## 📚 Citation
-
-If you use this tool in your research, please cite:
-
-```bibtex
-@software{sdxl_dora_trainer,
-  title={SDXL DoRA Trainer: Production-Ready Fine-tuning Tool},
-  author={ElouarnLC},
-  year={2025},
-  url={https://github.com/ElouarnLC/sdxl-dora-trainer},
-  license={MIT}
-}
-```
-
----
-
-**Happy Training! 🎨✨**
