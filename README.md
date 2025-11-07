@@ -222,7 +222,7 @@ logs/
 └── training.log                    # Text logs
 ```
 
-## Why using DoRA instead LoRA ?
+## Why use DoRA instead of LoRA ?
 
 DoRA (Weight-Decomposed Low-Rank Adaptation) offers several advantages over traditional LoRA:
 
